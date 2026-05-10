@@ -1,0 +1,4 @@
+.venv/
+sessions/
+.vscode/
+__pycache__/
