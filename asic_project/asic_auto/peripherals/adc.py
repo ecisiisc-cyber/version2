@@ -15,6 +15,20 @@ ADC_MAX       = 65535
 CONV_DELAY_S  = 0.005  # 5 ms conversion wait
 
 
+# def adc_write(channel):
+#     """
+#     Trigger ADC conversion on channel 0–7.
+#     TX: AA 20 03 A1 [channel] FF
+#     RX: 5A 5A
+#     """
+#     if channel not in range(8):
+#         return {"status": "error", "error": "channel must be 0-7"}
+#     data = bytes([0xA1, channel & 0x07, 0xFF])
+#     result = uart.send_packet(uart.SOF_WRITE, PERIPHERAL_ID, data)
+#     result["channel"] = channel
+#     return result
+
+# modified by harriam in compactable with the verilog adc peripheral -two writes to trigger conversion
 def adc_write(channel):
     """
     Trigger ADC conversion on channel 0–7.
@@ -23,6 +37,10 @@ def adc_write(channel):
     """
     if channel not in range(8):
         return {"status": "error", "error": "channel must be 0-7"}
+    data = bytes([0xA1, channel & 0x07, 0xFF])
+    result = uart.send_packet(uart.SOF_WRITE, PERIPHERAL_ID, data)
+    data = bytes([0xA1, channel & 0x07, 0xFF])
+    result = uart.send_packet(uart.SOF_WRITE, PERIPHERAL_ID, data)
     data = bytes([0xA1, channel & 0x07, 0xFF])
     result = uart.send_packet(uart.SOF_WRITE, PERIPHERAL_ID, data)
     result["channel"] = channel

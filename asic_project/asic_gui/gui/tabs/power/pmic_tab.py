@@ -63,7 +63,7 @@ class PMICTab(QWidget):
 
         info = QLabel(
             "Must be called before writing any voltage register.\n"
-            "TX: AA 04 04 AA 07 D1 DD  (hardcoded unlock sequence)"
+            "TX: AA 04 04 AA 07 D3 DD  (hardcoded unlock sequence)"
         )
         info.setStyleSheet("color: #8B949E; font-size: 11px;")
         lay.addWidget(info)
@@ -73,7 +73,7 @@ class PMICTab(QWidget):
         self.unlock_btn.setObjectName("btn_primary")
         self.unlock_btn.setToolTip(
             "Send unlock sequence to MCP16701 PMIC.\n\n"
-            "TX: AA 04 04 AA 07 D1 DD\n"
+            "TX: AA 04 04 AA 07 D3 DD\n"
             "  SOF 0xAA = Write\n"
             "  ID  0x04 = PMIC\n"
             "  LEN 0x04 = 4 data bytes\n"

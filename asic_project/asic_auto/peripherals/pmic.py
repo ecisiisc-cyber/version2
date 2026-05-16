@@ -48,11 +48,11 @@ def _read_reg(reg_addr):
 
 def unlock_pmic():
     """
-    Send hardcoded unlock sequence: AA 04 04 AA 07 D1 DD
+    Send hardcoded unlock sequence: AA 04 04 AA 07 D3 DD
     This is a special write command to enable PMIC configuration.
     RX: 5A 5A
     """
-    data = bytes([CMD_WRITE, 0x07, 0xD1, 0xDD])
+    data = bytes([CMD_WRITE, 0x07, 0xD3, 0xDD])
     result = uart.send_packet(uart.SOF_WRITE, PERIPHERAL_ID, data)
     result["operation"] = "unlock"
     return result
