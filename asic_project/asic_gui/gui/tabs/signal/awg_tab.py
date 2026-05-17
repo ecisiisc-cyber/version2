@@ -54,7 +54,7 @@ class AWGTab(QWidget):
             "Desired AWG output frequency in Hz.\n"
             "Range: 1 Hz – 50 MHz  (Nyquist limit with divisor=1)\n\n"
             "Formula:\n"
-            "  Fs   = 100 MHz / (2 × clock_divisor)\n"
+            "  Fs   = 100 MHz / clock_divisor\n"
             "  inc  = round(Fout × 65536 / Fs)\n"
             "  Fout_actual = Fs × inc / 65536\n\n"
             "TX: AA 40 04 [div_H][div_L][inc_H][inc_L]\n"
@@ -68,7 +68,7 @@ class AWGTab(QWidget):
         div_row = QHBoxLayout()
         self.override_chk = QCheckBox("Manual clock divisor override")
         self.override_chk.setToolTip(
-            "When unchecked: divisor=1 (Fs=50 MHz)\n"
+            "When unchecked: divisor=1 (Fs=100 MHz)\n"
             "When checked: set divisor manually to control Fs independently.\n"
             "Valid range: 1–65535"
         )
@@ -79,9 +79,9 @@ class AWGTab(QWidget):
         self.div_spin.setEnabled(False)
         self.div_spin.setToolTip(
             "Clock divisor for the DDS sampling clock.\n"
-            "Fs = 100 MHz / (2 × divisor)\n"
-            "divisor=1 → Fs=50 MHz (max)\n"
-            "divisor=2 → Fs=25 MHz\n"
+            "Fs = 100 MHz / divisor\n"
+            "divisor=1 → Fs=100 MHz (max)\n"
+            "divisor=2 → Fs=50 MHz\n"
             "Only active when 'Manual override' is checked."
         )
         self.div_spin.valueChanged.connect(self._update_computed)
@@ -125,7 +125,7 @@ class AWGTab(QWidget):
     def _update_computed(self):
         fout = self.fout_spin.value()
         div  = self.div_spin.value() if self.override_chk.isChecked() else 1
-        fs   = CLK_FREQ / (2 * div)
+        fs   = CLK_FREQ / div
         inc  = round(fout * 65536 / fs)
         inc  = max(0, min(inc, 65535))
         actual = fs * inc / 65536

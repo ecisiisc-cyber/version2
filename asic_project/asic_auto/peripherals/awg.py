@@ -3,10 +3,10 @@
 # TX: AA 40 04 [clk_div_H][clk_div_L][inc_H][inc_L]
 # RX: 5A
 #
-# Clock formula:  Fs   = clk_freq / (2 * clock_divisor)
+# Clock formula:  Fs   = clk_freq / clock_divisor
 # DDS formula:    Fout = Fs * inc / 2^16
 # Rearranged:     inc  = round(Fout * 2^16 / Fs)
-#               = round(Fout * 2^16 * 2 * clock_divisor / clk_freq)
+#               = round(Fout * 2^16 * clock_divisor / clk_freq)
 
 import peripherals.uart_handler as uart
 
@@ -33,7 +33,7 @@ def awg(clock_divisor, inc):
     ])
 
     result = uart.send_packet(uart.SOF_WRITE, PERIPHERAL_ID, data)
-    fs = CLK_FREQ_HZ / (2 * clock_divisor)
+    fs = CLK_FREQ_HZ / clock_divisor
     actual_fout = fs * inc / PHASE_MAX
 
     result["clock_divisor"] = clock_divisor
@@ -48,11 +48,11 @@ def awg_set_frequency(fout_hz, clock_divisor=1):
     """
     Compute inc from desired Fout and set AWG.
     fout_hz      : desired output frequency in Hz
-    clock_divisor: 16-bit int, default 1 (Fs = 50 MHz)
+    clock_divisor: 16-bit int, default 1 (Fs = 100 MHz)
     Returns dict with computed and actual frequencies.
     """
     clock_divisor = max(1, min(clock_divisor, 65535))
-    fs = CLK_FREQ_HZ / (2 * clock_divisor)
+    fs = CLK_FREQ_HZ / clock_divisor
     inc = round(fout_hz * PHASE_MAX / fs)
     inc = max(0, min(inc, 65535))
 
