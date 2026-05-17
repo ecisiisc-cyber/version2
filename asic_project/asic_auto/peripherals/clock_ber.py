@@ -8,10 +8,14 @@
 # Frequency formula: f_out = clk_freq / (2 * divider)
 # clk_freq = 100 MHz
 
+import time
+
 import peripherals.uart_handler as uart
 
 PERIPHERAL_ID = 0x80
 CLK_FREQ_HZ   = 100_000_000
+BER_BITS      = 100_000
+BER_MARGIN_S  = 0.05
 
 # Store last used divisor so read_ber can reuse it
 _last_divisor = 2
@@ -64,6 +68,15 @@ def clock_set_frequency(freq_hz):
     return result
 
 
+def ber_wait_time_s(freq_hz, margin_s=BER_MARGIN_S):
+    """
+    Wait time needed for the 100000-bit BER run at the selected frequency.
+    """
+    if freq_hz <= 0:
+        return None
+    return (BER_BITS / freq_hz) + max(0.0, float(margin_s))
+
+
 def read_ber():
     """
     Read current BER counter value.
@@ -85,6 +98,49 @@ def read_ber():
     return result
 
 
+def clock_set_frequency_and_read_ber(freq_hz, margin_s=BER_MARGIN_S,
+                                     stop_check=None):
+    """
+    Set clock, wait for 100000 bits plus margin, then read BER.
+    """
+    clk_result = clock_set_frequency(freq_hz)
+    actual_freq = clk_result.get("actual_freq_hz")
+    wait_s = ber_wait_time_s(actual_freq, margin_s) if actual_freq else None
+
+    if clk_result.get("status") != "ok" or wait_s is None:
+        return {
+            "status": clk_result.get("status", "error"),
+            "clock_result": clk_result,
+            "ber_result": None,
+            "ber_raw": None,
+            "wait_s": wait_s,
+        }
+
+    deadline = time.time() + wait_s
+    while True:
+        if stop_check and stop_check():
+            return {
+                "status": "stopped",
+                "clock_result": clk_result,
+                "ber_result": None,
+                "ber_raw": None,
+                "wait_s": wait_s,
+            }
+        remaining = deadline - time.time()
+        if remaining <= 0:
+            break
+        time.sleep(min(0.1, remaining))
+
+    ber_result = read_ber()
+    return {
+        "status": ber_result.get("status"),
+        "clock_result": clk_result,
+        "ber_result": ber_result,
+        "ber_raw": ber_result.get("ber_raw"),
+        "wait_s": wait_s,
+    }
+
+
 def sweep_ber(freq_list, log_callback=None):
     """
     Step through a list of frequencies, set clock, read BER.
@@ -93,13 +149,15 @@ def sweep_ber(freq_list, log_callback=None):
     """
     results = []
     for freq in freq_list:
-        clk_result = clock_set_frequency(freq)
-        ber_result = read_ber()
+        point_result = clock_set_frequency_and_read_ber(freq)
+        clk_result = point_result.get("clock_result")
+        ber_result = point_result.get("ber_result") or {}
         point = {
             "freq_hz": freq,
             "clock_result": clk_result,
             "ber_result": ber_result,
             "ber_raw": ber_result.get("ber_raw"),
+            "wait_s": point_result.get("wait_s"),
         }
         results.append(point)
         if log_callback:

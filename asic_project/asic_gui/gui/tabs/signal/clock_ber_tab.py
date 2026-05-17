@@ -7,7 +7,6 @@
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', '..', '..'))
 
-import time
 from PyQt5.QtCore    import pyqtSignal, Qt, QThread, pyqtSlot
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGroupBox,
@@ -21,7 +20,12 @@ from matplotlib.figure import Figure
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 
 from gui.scale import sc
-from peripherals.clock_ber   import clock_set_frequency, read_ber, sweep_ber
+from peripherals.clock_ber   import (
+    BER_MARGIN_S,
+    ber_wait_time_s,
+    clock_set_frequency,
+    clock_set_frequency_and_read_ber,
+)
 from workers.qthread_worker  import run_in_thread
 from gui.widgets             import ResultBox, ValueDisplay, StatusIndicator
 from style.theme             import get_matplotlib_style
@@ -36,9 +40,10 @@ class BERSweepWorker(QThread):
     finished    = pyqtSignal()
     progress    = pyqtSignal(int)
 
-    def __init__(self, freq_list):
+    def __init__(self, freq_list, margin_s):
         super().__init__()
         self._freq_list = freq_list
+        self._margin_s  = margin_s
         self._stop      = False
 
     def stop(self):
@@ -49,10 +54,11 @@ class BERSweepWorker(QThread):
         for i, freq in enumerate(self._freq_list):
             if self._stop:
                 break
-            clk_r = clock_set_frequency(freq)
-            time.sleep(0.05)
-            ber_r  = read_ber()
-            ber_raw = ber_r.get("ber_raw")
+            result = clock_set_frequency_and_read_ber(
+                freq, self._margin_s, stop_check=lambda: self._stop)
+            if result.get("status") == "stopped":
+                break
+            ber_raw = result.get("ber_raw")
             self.point_ready.emit(freq, ber_raw)
             self.progress.emit(int((i + 1) / total * 100))
         self.finished.emit()
@@ -143,7 +149,9 @@ class ClockBERTab(QWidget):
 
         self.read_ber_btn = QPushButton("📖  Read BER")
         self.read_ber_btn.setToolTip(
-            "Read current BER counter from FPGA.\n\n"
+            "Set the selected clock, wait for 100000 bits plus margin, then read BER.\n\n"
+            "Wait = 100000 / actual_clock_frequency + margin\n\n"
+            "Set TX: AA 80 05 AA [div bytes]\n"
             "TX: 55 80 05 55 [div bytes — same as last set clock]\n"
             "RX: 5A [BER_B1][BER_B2]  (2-byte BER value)\n\n"
             "Returns raw 16-bit BER count."
@@ -151,13 +159,34 @@ class ClockBERTab(QWidget):
         self.read_ber_btn.clicked.connect(self._read_ber)
         ber_lay.addWidget(self.read_ber_btn)
 
+        margin_row = QHBoxLayout()
+        margin_row.addWidget(QLabel("Margin (s):"))
+        self.ber_margin_spin = QDoubleSpinBox()
+        self.ber_margin_spin.setRange(0.0, 3600.0)
+        self.ber_margin_spin.setValue(BER_MARGIN_S)
+        self.ber_margin_spin.setDecimals(3)
+        self.ber_margin_spin.setSingleStep(0.010)
+        self.ber_margin_spin.setToolTip(
+            "Extra wait time added after the 100000-bit BER run."
+        )
+        self.ber_margin_spin.valueChanged.connect(self._update_timing_label)
+        margin_row.addWidget(self.ber_margin_spin)
+        margin_row.addStretch()
+        ber_lay.addLayout(margin_row)
+
         self.ber_raw_disp = ValueDisplay("BER raw (dec)", "",    width=130)
         self.ber_hex_disp = ValueDisplay("BER raw (hex)", "",    width=130)
+        self.ber_wait_disp = ValueDisplay("Estimated wait", "s", width=130)
+        self.ber_wait_warn = QLabel("")
+        self.ber_wait_warn.setObjectName("label_warn")
         self.ber_status   = StatusIndicator("idle")
         ber_lay.addWidget(self.ber_raw_disp)
         ber_lay.addWidget(self.ber_hex_disp)
+        ber_lay.addWidget(self.ber_wait_disp)
+        ber_lay.addWidget(self.ber_wait_warn)
         ber_lay.addWidget(self.ber_status)
         top_lay.addWidget(ber_grp)
+        self._update_timing_label()
 
         self.result_box = ResultBox()
         top_lay.addWidget(self.result_box)
@@ -201,7 +230,7 @@ class ClockBERTab(QWidget):
         self.run_sweep_btn.setObjectName("btn_success")
         self.run_sweep_btn.setToolTip(
             "Sweep clock frequency from Start to Stop.\n"
-            "At each point: set clock → wait 50 ms → read BER.\n"
+            "At each point: set clock → wait 100000/frequency + margin → read BER.\n"
             "Points are logarithmically spaced.\n"
             "Results plot live as each point completes."
         )
@@ -240,6 +269,21 @@ class ClockBERTab(QWidget):
         actual = CLK_FREQ / (2 * div)
         self.divisor_lbl.set_value(div, "{:.0f}")
         self.actual_f_lbl.set_value(actual / 1e6, "{:.4f}")
+        if hasattr(self, "ber_wait_disp"):
+            self._update_timing_label()
+
+    def _update_timing_label(self):
+        freq = self.freq_spin.value()
+        div  = max(1, round(CLK_FREQ / (2 * freq)))
+        actual = CLK_FREQ / (2 * div)
+        wait_s = ber_wait_time_s(actual, self.ber_margin_spin.value())
+        self.ber_wait_disp.set_value(wait_s, "{:.3f}")
+
+        if wait_s and wait_s > 30.0:
+            self.ber_wait_warn.setText(
+                f"Long BER wait: this point will take about {wait_s:.1f} s")
+        else:
+            self.ber_wait_warn.setText("")
 
     def _set_clock(self):
         freq = self.freq_spin.value()
@@ -265,9 +309,14 @@ class ClockBERTab(QWidget):
 
     # ── BER read ───────────────────────────────────────────────────────────
     def _read_ber(self):
+        freq = self.freq_spin.value()
+        margin_s = self.ber_margin_spin.value()
         self.read_ber_btn.setEnabled(False)
+        self.set_clk_btn.setEnabled(False)
+        self.ber_status.set_state("busy", "Waiting for BER run")
+        self.result_box.set_busy()
         self._thread, _ = run_in_thread(
-            read_ber,
+            clock_set_frequency_and_read_ber, freq, margin_s,
             on_result=self._on_ber_read,
             on_error=self._on_error,
             parent=self,
@@ -275,7 +324,11 @@ class ClockBERTab(QWidget):
 
     def _on_ber_read(self, result):
         self.read_ber_btn.setEnabled(True)
-        self.result_box.update(result)
+        self.set_clk_btn.setEnabled(True)
+        ber_result = result.get("ber_result")
+        clk_result = result.get("clock_result", {})
+        display_result = ber_result or clk_result or result
+        self.result_box.update(display_result)
         raw = result.get("ber_raw")
         if raw is not None:
             self.ber_raw_disp.set_value(raw, "{:.0f}")
@@ -283,10 +336,22 @@ class ClockBERTab(QWidget):
             self.ber_status.set_state("ok", f"BER = {raw}")
         else:
             self.ber_status.set_state("error", "No data")
-        log_transaction("RX", "ClockBER", result.get("rx", b""),
-                        f"BER={raw}", result.get("status", ""))
-        self.log_signal.emit("RX", "ClockBER", result.get("rx", b""),
-                             f"BER={raw}", result.get("status", ""))
+
+        wait_s = result.get("wait_s")
+        parsed = f"BER={raw} wait={wait_s:.3f}s" if wait_s is not None else f"BER={raw}"
+        if clk_result:
+            actual = clk_result.get("actual_freq_hz", 0)
+            div = clk_result.get("divisor", 0)
+            clk_parsed = f"freq={actual/1e6:.4f}MHz div={div}"
+            log_transaction("TX", "ClockBER", clk_result.get("tx", b""),
+                            clk_parsed, clk_result.get("status", ""))
+            self.log_signal.emit("TX", "ClockBER", clk_result.get("tx", b""),
+                                 clk_parsed, clk_result.get("status", ""))
+        if ber_result:
+            log_transaction("RX", "ClockBER", ber_result.get("rx", b""),
+                            parsed, ber_result.get("status", ""))
+            self.log_signal.emit("RX", "ClockBER", ber_result.get("rx", b""),
+                                 parsed, ber_result.get("status", ""))
 
     # ── BER sweep ──────────────────────────────────────────────────────────
     def _run_sweep(self):
@@ -309,7 +374,7 @@ class ClockBERTab(QWidget):
         self.run_sweep_btn.setEnabled(False)
         self.stop_sweep_btn.setEnabled(True)
 
-        self._sweep_worker = BERSweepWorker(freq_list)
+        self._sweep_worker = BERSweepWorker(freq_list, self.ber_margin_spin.value())
         self._sweep_worker.point_ready.connect(self._on_sweep_point)
         self._sweep_worker.progress.connect(self.sweep_progress.setValue)
         self._sweep_worker.finished.connect(self._on_sweep_done)
