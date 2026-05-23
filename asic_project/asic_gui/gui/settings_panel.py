@@ -195,7 +195,7 @@ class SettingsPanel(QWidget):
         lay.setContentsMargins(6, 14, 6, 6)
         lay.setSpacing(5)
         lay.addWidget(_section_label("VISA ADDRESS"))
-        self.smu_visa_edit = QLineEdit("USB0::0x05E6::0x2602::INSTR")
+        self.smu_visa_edit = QLineEdit("USB0::0x05E6::0x2602::4611674::INSTR")
         self.smu_visa_edit.setToolTip(
             "VISA address of the Keithley 2602B SMU.\n"
             "Format: USB0::VID::PID::SERIAL::INSTR")
@@ -238,7 +238,7 @@ class SettingsPanel(QWidget):
         lay.setContentsMargins(6, 14, 6, 6)
         lay.setSpacing(5)
         lay.addWidget(_section_label("VISA ADDRESS"))
-        self.psu_visa_edit = QLineEdit("USB0::0x05E6::0x2230::INSTR")
+        self.psu_visa_edit = QLineEdit("USB0::0x05E6::0x2230::9211055::INSTR") 
         self.psu_visa_edit.setToolTip(
             "VISA address of the Keithley 2230G-30-1 PSU.\n"
             "3 channels: CH1/CH2 (0-30 V), CH3 (0-6 V).")

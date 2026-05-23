@@ -2,7 +2,7 @@
 # LTC2656 DAC tab with:
 #   - Channel select (A–H), analog mV or digital 16-bit input
 #   - Send DAC command
-#   - DAC linearity sweep: sweep mV range, send each value, read back via ADC,
+#   - DAC loop back sweep: sweep mV range, send each value, read back via ADC,
 #     plot expected vs actual inline using matplotlib embedded in PyQt5.
 
 import sys, os
@@ -44,7 +44,7 @@ ADC_VREF = 2500.0
 
 # ── Sweep worker ──────────────────────────────────────────────────────────────
 class SweepWorker(QThread):
-    """Runs the DAC linearity sweep in a thread, emitting one point at a time."""
+    """Runs the DAC loop back sweep in a thread, emitting one point at a time."""
     point_ready = pyqtSignal(float, float, float)  # expected_mv, dac_mv, adc_mv
     finished    = pyqtSignal()
     progress    = pyqtSignal(int)
@@ -219,7 +219,7 @@ class LevelSettingTab(QWidget):
         top_lay.addWidget(self.result_box)
         # ── Linearity sweep + plot (same scroll, continues below) ──────
 
-        sweep_grp = QGroupBox("DAC Linearity Sweep  (S9)")
+        sweep_grp = QGroupBox("DAC loop back Sweep  (S9)")
         sw_lay = QVBoxLayout(sweep_grp)
 
         params_row = QHBoxLayout()
@@ -251,7 +251,7 @@ class LevelSettingTab(QWidget):
         sw_lay.addLayout(params_row)
 
         sweep_btn_row = QHBoxLayout()
-        self.run_sweep_btn = QPushButton("▶  Run Linearity Sweep")
+        self.run_sweep_btn = QPushButton("▶  Run loop back Sweep")
         self.run_sweep_btn.setObjectName("btn_success")
         self.run_sweep_btn.setToolTip(
             "Sweep DAC output from Start to Stop in Step increments.\n"
@@ -393,7 +393,7 @@ class LevelSettingTab(QWidget):
         self._apply_theme()
         self._ax.set_xlabel("Expected Voltage (mV)")
         self._ax.set_ylabel("Voltage (mV)")
-        self._ax.set_title("DAC Linearity Check — Expected vs Actual")
+        self._ax.set_title("DAC loop back Check — Expected vs Actual")
         self._ax.set_xlim(0, 2500)
         self._ax.set_ylim(0, 2700)
         # Ideal line
@@ -406,7 +406,7 @@ class LevelSettingTab(QWidget):
         self._apply_theme()
         self._ax.set_xlabel("Expected Voltage (mV)")
         self._ax.set_ylabel("Voltage (mV)")
-        self._ax.set_title("DAC Linearity Check — Expected vs Actual")
+        self._ax.set_title("DAC loop back Check — Expected vs Actual")
 
         x = self._sweep_expected
         self._ax.plot([0, 2500], [0, 2500], "--",
