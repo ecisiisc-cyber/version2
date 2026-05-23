@@ -3,7 +3,7 @@
 # Set clock TX : AA 80 05 AA [div31:24][div23:16][div15:8][div7:0]
 # Set clock RX : 5A 5A
 # Read BER  TX : 55 80 05 55 [div31:24][div23:16][div15:8][div7:0]
-# Read BER  RX : 5A [BER_B1][BER_B2]
+# Read BER  RX : 5A [BER_B3][BER_B2][BER_B1][BER_B0]
 #
 # Frequency formula: f_out = clk_freq / (2 * divider)
 # clk_freq = 100 MHz
@@ -82,16 +82,17 @@ def read_ber():
     Read current BER counter value.
     Uses the last divisor set by clock() or clock_set_frequency().
     TX: 55 80 05 55 [div bytes x4]
-    RX: 5A [BER_B1][BER_B2]
+    RX: 5A [BER_B3][BER_B2][BER_B1][BER_B0]
     """
     data = bytes([uart.SOF_READ]) + _div_to_bytes(_last_divisor)
     result = uart.send_packet(uart.SOF_READ, PERIPHERAL_ID, data)
 
     rx = result.get("rx", b"")
-    if result["status"] == "ok" and len(rx) >= 3:
-        ber_raw = (rx[1] << 8) | rx[2]
+    if result["status"] == "ok" and len(rx) >= 5:
+        ber_raw = ((rx[1] << 24) | (rx[2] << 16) |
+                   (rx[3] << 8) | rx[4])
         result["ber_raw"] = ber_raw
-        result["ber_bytes"] = [rx[1], rx[2]]
+        result["ber_bytes"] = [rx[1], rx[2], rx[3], rx[4]]
     else:
         result["ber_raw"] = None
         result["ber_bytes"] = []

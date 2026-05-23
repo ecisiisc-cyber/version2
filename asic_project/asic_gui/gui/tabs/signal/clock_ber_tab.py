@@ -153,8 +153,8 @@ class ClockBERTab(QWidget):
             "Wait = 100000 / actual_clock_frequency + margin\n\n"
             "Set TX: AA 80 05 AA [div bytes]\n"
             "TX: 55 80 05 55 [div bytes — same as last set clock]\n"
-            "RX: 5A [BER_B1][BER_B2]  (2-byte BER value)\n\n"
-            "Returns raw 16-bit BER count."
+            "RX: 5A [BER_B3][BER_B2][BER_B1][BER_B0]  (4-byte BER value)\n\n"
+            "Returns raw 32-bit BER count."
         )
         self.read_ber_btn.clicked.connect(self._read_ber)
         ber_lay.addWidget(self.read_ber_btn)
@@ -332,7 +332,7 @@ class ClockBERTab(QWidget):
         raw = result.get("ber_raw")
         if raw is not None:
             self.ber_raw_disp.set_value(raw, "{:.0f}")
-            self.ber_hex_disp._val.setText(f"0x{raw:04X}")
+            self.ber_hex_disp._val.setText(f"0x{raw:08X}")
             self.ber_status.set_state("ok", f"BER = {raw}")
         else:
             self.ber_status.set_state("error", "No data")
