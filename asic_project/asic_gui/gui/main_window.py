@@ -26,6 +26,7 @@ from gui.tabs.link_config.raw_uart_tab    import RawUartTab
 from gui.tabs.signal.level_setting_tab import LevelSettingTab
 from gui.tabs.signal.awg_tab           import AWGTab
 from gui.tabs.signal.clock_ber_tab     import ClockBERTab
+from gui.tabs.signal.ber_shmoo_tab     import BERShmooTab
 from gui.tabs.signal.adc_tab           import ADCTab
 
 # Power tabs
@@ -138,10 +139,12 @@ class MainWindow(QMainWindow):
         self.level_setting_tab = LevelSettingTab()
         self.awg_tab           = AWGTab()
         self.clock_ber_tab     = ClockBERTab()
+        self.ber_shmoo_tab     = BERShmooTab()
         self.adc_tab           = ADCTab()
         sig_tabs.addTab(self.level_setting_tab, "DAC")
         sig_tabs.addTab(self.awg_tab,           "AWG")
         sig_tabs.addTab(self.clock_ber_tab,     "Clock + BER")
+        sig_tabs.addTab(self.ber_shmoo_tab,     "BER Shmoo")
         sig_tabs.addTab(self.adc_tab,           "ADC")
         self._main_tabs.addTab(sig_tabs, "📡  Signal")
 
@@ -185,7 +188,7 @@ class MainWindow(QMainWindow):
         log_tabs = [
             self.loopback_tab, self.chip_config_tab, self.raw_uart_tab,
             self.level_setting_tab, self.awg_tab, self.clock_ber_tab,
-            self.adc_tab, self.pmic_tab,
+            self.ber_shmoo_tab, self.adc_tab, self.pmic_tab,
         ]
         for tab in log_tabs:
             tab.log_signal.connect(self.log_panel.append)
@@ -223,7 +226,8 @@ class MainWindow(QMainWindow):
         icon = "🌙  Dark" if self._current_theme == "light" else "☀  Light"
         self._theme_action.setText(icon)
         # Propagate to embedded plots
-        for tab in [self.level_setting_tab, self.clock_ber_tab]:
+        for tab in [self.level_setting_tab, self.clock_ber_tab,
+                    self.ber_shmoo_tab]:
             tab.set_theme(self._current_theme)
 
     def _toggle_log(self):
