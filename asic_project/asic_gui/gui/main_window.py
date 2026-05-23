@@ -139,7 +139,7 @@ class MainWindow(QMainWindow):
         self.awg_tab           = AWGTab()
         self.clock_ber_tab     = ClockBERTab()
         self.adc_tab           = ADCTab()
-        sig_tabs.addTab(self.level_setting_tab, "Level Setting")
+        sig_tabs.addTab(self.level_setting_tab, "DAC")
         sig_tabs.addTab(self.awg_tab,           "AWG")
         sig_tabs.addTab(self.clock_ber_tab,     "Clock + BER")
         sig_tabs.addTab(self.adc_tab,           "ADC")

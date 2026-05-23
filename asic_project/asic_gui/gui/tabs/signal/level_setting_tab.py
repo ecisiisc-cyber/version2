@@ -393,7 +393,7 @@ class LevelSettingTab(QWidget):
         self._apply_theme()
         self._ax.set_xlabel("Expected Voltage (mV)")
         self._ax.set_ylabel("Voltage (mV)")
-        self._ax.set_title("DAC loop back Check — Expected vs Actual")
+        self._ax.set_title("DAC Loopback Check - Expected vs ADC")
         self._ax.set_xlim(0, 2500)
         self._ax.set_ylim(0, 2700)
         # Ideal line
@@ -406,7 +406,7 @@ class LevelSettingTab(QWidget):
         self._apply_theme()
         self._ax.set_xlabel("Expected Voltage (mV)")
         self._ax.set_ylabel("Voltage (mV)")
-        self._ax.set_title("DAC loop back Check — Expected vs Actual")
+        self._ax.set_title("DAC Loopback Check - Expected vs ADC")
 
         x = self._sweep_expected
         self._ax.plot([0, 2500], [0, 2500], "--",
@@ -415,9 +415,25 @@ class LevelSettingTab(QWidget):
             self._ax.plot(x, self._sweep_dac, "o-",
                           color="#00D4FF", linewidth=1.5,
                           markersize=4, label="DAC Quantised")
-            self._ax.plot(x, self._sweep_adc, "s-",
-                          color="#3FB950", linewidth=1.5,
-                          markersize=4, label="ADC Measured")
+            self._ax.plot(x, self._sweep_adc, "-",
+                          color="#8B949E", linewidth=1.0,
+                          alpha=0.55, label="ADC Measured")
+            point_colors = [
+                "#F85149" if abs(adc_mv - expected_mv) > 10.0 else "#3FB950"
+                for expected_mv, adc_mv in zip(x, self._sweep_adc)
+            ]
+            self._ax.scatter(x, self._sweep_adc, c=point_colors,
+                             marker="s", s=28, zorder=3,
+                             label="ADC point (red > 10 mV error)")
+            for expected_mv, adc_mv in zip(x, self._sweep_adc):
+                self._ax.annotate(
+                    f"{adc_mv:.1f} mV",
+                    (expected_mv, adc_mv),
+                    textcoords="offset points",
+                    xytext=(4, 5),
+                    fontsize=7,
+                    color=get_matplotlib_style(self._current_theme)["text.color"],
+                )
 
         self._ax.legend(loc="upper left", fontsize=9,
                         facecolor="#161B22", labelcolor="#E6EDF3")
