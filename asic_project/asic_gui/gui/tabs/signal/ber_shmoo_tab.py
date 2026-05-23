@@ -35,6 +35,10 @@ from utils.session_logger import log_transaction
 
 BER_BITS = 100_000
 BER_YELLOW_LIMIT = int(BER_BITS * 0.001)  # 0.1% of 100000 = 100
+MAX_SHMOO_POINTS = 150
+MAX_ESTIMATED_RUNTIME_S = 600.0
+PMIC_POINT_OVERHEAD_S = 1.0
+UART_POINT_OVERHEAD_S = 0.5
 
 
 def _inclusive_range(start, stop, step):
@@ -62,6 +66,28 @@ def _ber_color_code(ber_raw):
     if ber_raw is not None and ber_raw <= BER_YELLOW_LIMIT:
         return 1
     return 2
+
+
+def _estimated_runtime_s(voltages_mv, freqs_hz, margin_s,
+                         voltage_settle_s, freq_settle_s):
+    total = 0.0
+    for _ in voltages_mv:
+        total += PMIC_POINT_OVERHEAD_S + max(0.0, voltage_settle_s)
+        for freq_hz in freqs_hz:
+            total += (
+                max(0.0, freq_settle_s) +
+                (BER_BITS / max(1.0, float(freq_hz))) +
+                max(0.0, margin_s) +
+                UART_POINT_OVERHEAD_S
+            )
+    return total
+
+
+def _format_duration(seconds):
+    seconds = max(0.0, float(seconds))
+    if seconds < 60:
+        return f"{seconds:.1f} s"
+    return f"{seconds / 60:.1f} min"
 
 
 class BERShmooWorker(QThread):
@@ -238,6 +264,7 @@ class BERShmooTab(QWidget):
         self.v_start.setRange(600.0, 3300.0)
         self.v_start.setValue(800.0)
         self.v_start.setDecimals(1)
+        self.v_start.valueChanged.connect(self._update_estimate)
         v_row.addWidget(self.v_start)
 
         v_row.addWidget(QLabel("stop:"))
@@ -245,6 +272,7 @@ class BERShmooTab(QWidget):
         self.v_stop.setRange(600.0, 3300.0)
         self.v_stop.setValue(1200.0)
         self.v_stop.setDecimals(1)
+        self.v_stop.valueChanged.connect(self._update_estimate)
         v_row.addWidget(self.v_stop)
 
         v_row.addWidget(QLabel("step:"))
@@ -252,6 +280,7 @@ class BERShmooTab(QWidget):
         self.v_step.setRange(1.0, 1000.0)
         self.v_step.setValue(100.0)
         self.v_step.setDecimals(1)
+        self.v_step.valueChanged.connect(self._update_estimate)
         v_row.addWidget(self.v_step)
         lay.addLayout(v_row)
 
@@ -261,6 +290,7 @@ class BERShmooTab(QWidget):
         self.f_start.setRange(1.0, 50_000_000.0)
         self.f_start.setValue(1_000_000.0)
         self.f_start.setDecimals(0)
+        self.f_start.valueChanged.connect(self._update_estimate)
         f_row.addWidget(self.f_start)
 
         f_row.addWidget(QLabel("stop:"))
@@ -268,13 +298,15 @@ class BERShmooTab(QWidget):
         self.f_stop.setRange(1.0, 50_000_000.0)
         self.f_stop.setValue(25_000_000.0)
         self.f_stop.setDecimals(0)
+        self.f_stop.valueChanged.connect(self._update_estimate)
         f_row.addWidget(self.f_stop)
 
         f_row.addWidget(QLabel("step:"))
         self.f_step = QDoubleSpinBox()
         self.f_step.setRange(1.0, 50_000_000.0)
-        self.f_step.setValue(1_000_000.0)
+        self.f_step.setValue(5_000_000.0)
         self.f_step.setDecimals(0)
+        self.f_step.valueChanged.connect(self._update_estimate)
         f_row.addWidget(self.f_step)
         lay.addLayout(f_row)
 
@@ -285,6 +317,7 @@ class BERShmooTab(QWidget):
         self.margin_spin.setValue(BER_MARGIN_S)
         self.margin_spin.setDecimals(3)
         self.margin_spin.setSingleStep(0.010)
+        self.margin_spin.valueChanged.connect(self._update_estimate)
         delay_row.addWidget(self.margin_spin)
 
         delay_row.addWidget(QLabel("Voltage settle (s):"))
@@ -293,6 +326,7 @@ class BERShmooTab(QWidget):
         self.v_settle_spin.setValue(0.200)
         self.v_settle_spin.setDecimals(3)
         self.v_settle_spin.setSingleStep(0.050)
+        self.v_settle_spin.valueChanged.connect(self._update_estimate)
         delay_row.addWidget(self.v_settle_spin)
 
         delay_row.addWidget(QLabel("Frequency settle (s):"))
@@ -301,8 +335,13 @@ class BERShmooTab(QWidget):
         self.f_settle_spin.setValue(0.020)
         self.f_settle_spin.setDecimals(3)
         self.f_settle_spin.setSingleStep(0.010)
+        self.f_settle_spin.valueChanged.connect(self._update_estimate)
         delay_row.addWidget(self.f_settle_spin)
         lay.addLayout(delay_row)
+
+        self.estimate_lbl = QLabel("")
+        self.estimate_lbl.setStyleSheet("color: #8B949E; font-size: 11px;")
+        lay.addWidget(self.estimate_lbl)
 
         btn_row = QHBoxLayout()
         self.run_btn = QPushButton("Run BER Shmoo")
@@ -323,6 +362,7 @@ class BERShmooTab(QWidget):
 
         self.status = StatusIndicator("idle")
         lay.addWidget(self.status)
+        self._update_estimate()
         return grp
 
     def _on_rail_type(self):
@@ -331,14 +371,45 @@ class BERShmooTab(QWidget):
         else:
             self.rail_num_spin.setRange(1, 4)
 
+    def _current_sweep_shape(self):
+        voltages_mv = _inclusive_range(
+            self.v_start.value(), self.v_stop.value(), self.v_step.value())
+        freqs_hz = _inclusive_range(
+            self.f_start.value(), self.f_stop.value(), self.f_step.value())
+        estimate_s = _estimated_runtime_s(
+            voltages_mv,
+            freqs_hz,
+            self.margin_spin.value(),
+            self.v_settle_spin.value(),
+            self.f_settle_spin.value(),
+        )
+        return voltages_mv, freqs_hz, estimate_s
+
+    def _update_estimate(self):
+        if not hasattr(self, "estimate_lbl"):
+            return
+        voltages_mv, freqs_hz, estimate_s = self._current_sweep_shape()
+        points = len(voltages_mv) * len(freqs_hz)
+        self.estimate_lbl.setText(
+            f"Points: {points}  Estimated runtime: {_format_duration(estimate_s)}")
+
     def _run_shmoo(self):
         if self._worker and self._worker.isRunning():
             return
 
-        self._voltages_mv = _inclusive_range(
-            self.v_start.value(), self.v_stop.value(), self.v_step.value())
-        self._freqs_hz = _inclusive_range(
-            self.f_start.value(), self.f_stop.value(), self.f_step.value())
+        self._voltages_mv, self._freqs_hz, estimate_s = self._current_sweep_shape()
+        points = len(self._voltages_mv) * len(self._freqs_hz)
+        if points > MAX_SHMOO_POINTS:
+            self.status.set_state(
+                "warning",
+                f"Too many points ({points}). Increase step size.")
+            return
+        if estimate_s > MAX_ESTIMATED_RUNTIME_S:
+            self.status.set_state(
+                "warning",
+                f"Estimated runtime {_format_duration(estimate_s)} is too long.")
+            return
+
         self._ber_grid = np.full((len(self._voltages_mv), len(self._freqs_hz)),
                                  np.nan)
         self._color_grid = np.full((len(self._voltages_mv), len(self._freqs_hz)),
