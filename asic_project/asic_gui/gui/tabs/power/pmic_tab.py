@@ -3,7 +3,7 @@
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', '..', '..'))
 
-from PyQt5.QtCore    import pyqtSignal, Qt
+from PyQt5.QtCore    import pyqtSignal, Qt, QThread
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGroupBox,
     QPushButton, QLabel, QDoubleSpinBox, QLineEdit,
@@ -12,7 +12,9 @@ from PyQt5.QtWidgets import (
 )
 
 from peripherals.pmic        import (
-    unlock_pmic, set_buck_voltage, set_ldo_voltage,
+    unlock_pmic,
+    configure_buck_voltage_and_enable, configure_ldo_voltage_and_enable,
+    disable_buck, disable_ldo,
     pmic_generic_write, pmic_generic_read,
 )
 from utils.pmic_vset_table   import vset_from_voltage, voltage_from_vset
@@ -23,12 +25,61 @@ from utils.session_logger    import log_transaction
 from gui.scale               import sc
 
 
+class PMICVoltageSweepWorker(QThread):
+    step_ready = pyqtSignal(object)
+
+    def __init__(self, is_ldo, rail_num, parent=None):
+        super().__init__(parent)
+        self._is_ldo = is_ldo
+        self._rail_num = rail_num
+        self._stop = False
+
+    def stop(self):
+        self._stop = True
+
+    def _wait_500ms(self):
+        for _ in range(10):
+            if self._stop:
+                return False
+            self.msleep(50)
+        return True
+
+    def _emit_step(self, label, result):
+        result["sweep_step"] = label
+        self.step_ready.emit(result)
+
+    def run(self):
+        set_fn = configure_ldo_voltage_and_enable if self._is_ldo else configure_buck_voltage_and_enable
+        disable_fn = disable_ldo if self._is_ldo else disable_buck
+        pattern = [
+            ("off", None),
+            ("1V", 1000.0),
+            ("2V", 2000.0),
+            ("1V", 1000.0),
+            ("off", None),
+        ]
+
+        while not self._stop:
+            for label, voltage_mv in pattern:
+                if self._stop:
+                    break
+                result = disable_fn(self._rail_num) if voltage_mv is None else set_fn(
+                    self._rail_num, voltage_mv)
+                self._emit_step(label, result)
+                if result.get("status") != "ok":
+                    self._stop = True
+                    break
+                if not self._wait_500ms():
+                    break
+
+
 class PMICTab(QWidget):
     log_signal = pyqtSignal(str, str, bytes, str, str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._thread = None
+        self._sweep_worker = None
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -78,7 +129,7 @@ class PMICTab(QWidget):
             "  ID  0x04 = PMIC\n"
             "  LEN 0x04 = 4 data bytes\n"
             "  CMD 0xAA = write command\n"
-            "  OPCODE_H 0x07, OPCODE_L 0xD1 = unlock register\n"
+            "  OPCODE_H 0x07, OPCODE_L 0xD3 = unlock register\n"
             "  VALUE 0xDD = unlock code\n\n"
             "RX: 5A 5A"
         )
@@ -162,39 +213,44 @@ class PMICTab(QWidget):
 
         # Buttons
         btn_row = QHBoxLayout()
-        self.set_volt_btn = QPushButton("⚡  Set Voltage (VSET0 + VSET1)")
+        self.set_volt_btn = QPushButton("Enable")
         self.set_volt_btn.setObjectName("btn_primary")
         self.set_volt_btn.setToolTip(
-            "Write the VSET code to both VSET0 and VSET1 registers.\n\n"
-            "Step 1: compute OPCODE_H, OPCODE_L from register address\n"
-            "  OPCODE_H = (1<<2) | (addr>>8 & 0x03)\n"
-            "  OPCODE_L = addr & 0xFF\n\n"
-            "Step 2: TX for VSET0: AA 04 04 AA [H][L][VSET]\n"
-            "Step 3: TX for VSET1: AA 04 04 AA [H][L][VSET]\n"
-            "RX each: 5A 5A"
+            "Unlock PMIC, write VSET0/VSET1, read both back, then enable.\n"
+            "If VSET readback does not match, retry from unlock."
         )
         self.set_volt_btn.clicked.connect(self._set_voltage)
 
-        self.read_vset0_btn = QPushButton("📖  Read VSET0")
-        self.read_vset0_btn.setToolTip(
-            "Read VSET0 register of selected regulator.\n"
-            "TX: 55 04 04 55 [OPCODE_H][OPCODE_L] 00\n"
-            "RX: 5A [VSET byte]  → decoded to mV"
+        self.disable_btn = QPushButton("Disable")
+        self.disable_btn.setObjectName("btn_danger")
+        self.disable_btn.setToolTip(
+            "Unlock PMIC, write the selected regulator enable register to off,\n"
+            "then read back the enable register to verify."
         )
-        self.read_vset0_btn.clicked.connect(lambda: self._read_vset(0))
+        self.disable_btn.clicked.connect(self._disable_regulator)
 
-        self.read_vset1_btn = QPushButton("📖  Read VSET1")
-        self.read_vset1_btn.setToolTip(
-            "Read VSET1 register of selected regulator.\n"
-            "TX: 55 04 04 55 [OPCODE_H][OPCODE_L] 00\n"
-            "RX: 5A [VSET byte]  → decoded to mV"
+        self.sweep_btn = QPushButton("Voltage Sweep")
+        self.sweep_btn.setObjectName("btn_success")
+        self.sweep_btn.setToolTip(
+            "Repeat on the selected rail: off, 1 V, 2 V, 1 V, off.\n"
+            "Each state is held for 500 ms until Stop Sweep is clicked."
         )
-        self.read_vset1_btn.clicked.connect(lambda: self._read_vset(1))
+        self.sweep_btn.clicked.connect(self._start_voltage_sweep)
+
+        self.stop_sweep_btn = QPushButton("Stop Sweep")
+        self.stop_sweep_btn.setObjectName("btn_danger")
+        self.stop_sweep_btn.setEnabled(False)
+        self.stop_sweep_btn.clicked.connect(self._stop_voltage_sweep)
 
         btn_row.addWidget(self.set_volt_btn)
-        btn_row.addWidget(self.read_vset0_btn)
-        btn_row.addWidget(self.read_vset1_btn)
+        btn_row.addWidget(self.disable_btn)
+        btn_row.addWidget(self.sweep_btn)
+        btn_row.addWidget(self.stop_sweep_btn)
+        btn_row.addStretch()
         lay.addLayout(btn_row)
+
+        self.sweep_status = StatusIndicator("idle")
+        lay.addWidget(self.sweep_status)
         return grp
 
     # ── Readback table ────────────────────────────────────────────────────
@@ -349,45 +405,110 @@ class PMICTab(QWidget):
         is_ldo, num = self._rail_info()
         mv = self.volt_spin.value()
         self.set_volt_btn.setEnabled(False)
-        fn = set_ldo_voltage if is_ldo else set_buck_voltage
+        self.disable_btn.setEnabled(False)
+        self.result_box.set_busy()
+        fn = configure_ldo_voltage_and_enable if is_ldo else configure_buck_voltage_and_enable
         self._thread, _ = run_in_thread(
             fn, num, mv,
             on_result=self._on_voltage_set,
-            on_error=lambda tb: self.set_volt_btn.setEnabled(True),
+            on_error=self._on_regulator_error,
             parent=self,
         )
 
     def _on_voltage_set(self, result):
         self.set_volt_btn.setEnabled(True)
+        self.disable_btn.setEnabled(True)
         self.result_box.update(result)
         actual = result.get("actual_mv", 0)
         vset   = result.get("vset_code", 0)
-        parsed = f"actual={actual:.4f}mV VSET=0x{vset:02X}"
-        log_transaction("TX", "PMIC", b"", parsed, result.get("status", ""))
-        self.log_signal.emit("TX", "PMIC", b"", parsed, result.get("status", ""))
+        attempts = result.get("attempt_count", 0)
+        rail = f"{result.get('rail_type', '?')} {result.get('rail_num', '?')}"
+        parsed = (
+            f"enable {rail} actual={actual:.4f}mV "
+            f"VSET=0x{vset:02X} attempts={attempts}"
+        )
+        log_transaction("TX", "PMIC", result.get("tx", b""),
+                        parsed, result.get("status", ""))
+        self.log_signal.emit("TX", "PMIC", result.get("tx", b""),
+                             parsed, result.get("status", ""))
 
-    def _read_vset(self, which):
-        """Read VSET0 (which=0) or VSET1 (which=1) of selected rail."""
+    def _disable_regulator(self):
         is_ldo, num = self._rail_info()
-        regs = LDO_REGS[num] if is_ldo else BUCK_REGS[num]
-        addr = regs["VSET0"] if which == 0 else regs["VSET1"]
+        self.set_volt_btn.setEnabled(False)
+        self.disable_btn.setEnabled(False)
+        self.result_box.set_busy()
+        fn = disable_ldo if is_ldo else disable_buck
         self._thread, _ = run_in_thread(
-            pmic_generic_read, addr,
-            on_result=self._on_vset_read,
-            on_error=None,
+            fn, num,
+            on_result=self._on_regulator_disabled,
+            on_error=self._on_regulator_error,
             parent=self,
         )
 
-    def _on_vset_read(self, result):
+    def _on_regulator_disabled(self, result):
+        self.set_volt_btn.setEnabled(True)
+        self.disable_btn.setEnabled(True)
         self.result_box.update(result)
-        v = result.get("value_read")
-        mv = result.get("voltage_mv")
-        log_transaction("RX", "PMIC", result.get("rx", b""),
-                        f"VSET=0x{v:02X} {mv}mV" if v is not None else "—",
-                        result.get("status", ""))
-        self.log_signal.emit("RX", "PMIC", result.get("rx", b""),
-                             f"VSET=0x{v:02X}" if v is not None else "—",
-                             result.get("status", ""))
+        rail = f"{result.get('rail_type', '?')} {result.get('rail_num', '?')}"
+        value = result.get("enable_value", 0)
+        parsed = f"disable {rail} value=0x{value:02X}"
+        log_transaction("TX", "PMIC", result.get("tx", b""),
+                        parsed, result.get("status", ""))
+        self.log_signal.emit("TX", "PMIC", result.get("tx", b""),
+                             parsed, result.get("status", ""))
+
+    def _on_regulator_error(self, tb):
+        self.set_volt_btn.setEnabled(True)
+        self.disable_btn.setEnabled(True)
+        self.sweep_btn.setEnabled(True)
+        self.stop_sweep_btn.setEnabled(False)
+        self.result_box.status.set_custom("#F85149", tb.splitlines()[-1])
+
+    def _start_voltage_sweep(self):
+        if self._sweep_worker and self._sweep_worker.isRunning():
+            return
+
+        is_ldo, num = self._rail_info()
+        self.set_volt_btn.setEnabled(False)
+        self.disable_btn.setEnabled(False)
+        self.sweep_btn.setEnabled(False)
+        self.stop_sweep_btn.setEnabled(True)
+        self.sweep_status.set_state("busy", "Voltage sweep running")
+        self.result_box.set_busy()
+
+        self._sweep_worker = PMICVoltageSweepWorker(is_ldo, num, parent=self)
+        self._sweep_worker.step_ready.connect(self._on_sweep_step)
+        self._sweep_worker.finished.connect(self._on_sweep_finished)
+        self._sweep_worker.start()
+
+    def _stop_voltage_sweep(self):
+        if self._sweep_worker:
+            self._sweep_worker.stop()
+        self.stop_sweep_btn.setEnabled(False)
+        self.sweep_status.set_state("busy", "Stopping sweep")
+
+    def _on_sweep_step(self, result):
+        self.result_box.update(result)
+        step = result.get("sweep_step", "?")
+        rail = f"{result.get('rail_type', '?')} {result.get('rail_num', '?')}"
+        status = result.get("status", "")
+        self.sweep_status.set_state(
+            "ok" if status == "ok" else "error",
+            f"Sweep {rail}: {step}"
+        )
+        parsed = f"sweep {rail} step={step}"
+        log_transaction("TX", "PMIC", result.get("tx", b""),
+                        parsed, status)
+        self.log_signal.emit("TX", "PMIC", result.get("tx", b""),
+                             parsed, status)
+
+    def _on_sweep_finished(self):
+        self.set_volt_btn.setEnabled(True)
+        self.disable_btn.setEnabled(True)
+        self.sweep_btn.setEnabled(True)
+        self.stop_sweep_btn.setEnabled(False)
+        self.sweep_status.set_state("idle", "Sweep stopped")
+        self._sweep_worker = None
 
     def _read_all(self):
         self.readall_btn.setEnabled(False)
