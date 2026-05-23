@@ -433,10 +433,17 @@ class LevelSettingTab(QWidget):
                 label="ADC point (red > 10 mV error)",
             )
 
+        # Lock axes BEFORE creating the annotation so it never triggers a resize
+        self._ax.set_xlim(0, 2500)
+        self._ax.set_ylim(0, 2700)
+        self._ax.autoscale(False)
+
         # Hover annotation — hidden until mouse enters a point
+        # annotation_clip=False keeps it visible near edges without affecting limits
         self._hover_ann = self._ax.annotate(
             "", xy=(0, 0), xytext=(15, 15),
             textcoords="offset points",
+            annotation_clip=False,
             bbox=dict(boxstyle="round,pad=0.5", fc="#1C2128", ec="#444C56", alpha=0.92),
             arrowprops=dict(arrowstyle="->", color="#8B949E"),
             fontsize=8,
