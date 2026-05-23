@@ -469,7 +469,17 @@ class LevelSettingTab(QWidget):
             expected_mv = self._sweep_expected[idx]
             adc_mv      = self._sweep_adc[idx]
             error_mv    = adc_mv - expected_mv
-            self._hover_ann.xy = (expected_mv, adc_mv)
+
+            # Flip offset so the tooltip never pushes outside the axes
+            xlim = self._ax.get_xlim()
+            ylim = self._ax.get_ylim()
+            x_frac = (expected_mv - xlim[0]) / (xlim[1] - xlim[0])
+            y_frac = (adc_mv      - ylim[0]) / (ylim[1] - ylim[0])
+            x_off = -100 if x_frac > 0.65 else 15
+            y_off =  -55 if y_frac > 0.65 else 15
+
+            self._hover_ann.xy    = (expected_mv, adc_mv)
+            self._hover_ann.xyann = (x_off, y_off)
             self._hover_ann.set_text(
                 f"Measured:  {adc_mv:.2f} mV\n"
                 f"Expected:  {expected_mv:.2f} mV\n"
