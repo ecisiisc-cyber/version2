@@ -96,6 +96,8 @@ class LevelSettingTab(QWidget):
         self._sweep_dac      = []
         self._sweep_adc      = []
         self._current_theme  = "dark"
+        self._scatter        = None
+        self._hover_ann      = None
 
         # ── Single scroll area for everything: controls + sweep + plot ──
         _outer = QVBoxLayout(self)
@@ -283,6 +285,7 @@ class LevelSettingTab(QWidget):
         self._canvas.setMinimumHeight(sc(380))
         self._canvas.setMaximumHeight(sc(500))
         self._init_plot()
+        self._canvas.mpl_connect("motion_notify_event", self._on_hover)
         root.addWidget(self._canvas)
         root.addStretch()
 
@@ -403,6 +406,8 @@ class LevelSettingTab(QWidget):
 
     def _update_plot(self, final=False):
         self._ax.clear()
+        self._scatter   = None
+        self._hover_ann = None
         self._apply_theme()
         self._ax.set_xlabel("Expected Voltage (mV)")
         self._ax.set_ylabel("Voltage (mV)")
@@ -422,23 +427,53 @@ class LevelSettingTab(QWidget):
                 "#F85149" if abs(adc_mv - expected_mv) > 10.0 else "#3FB950"
                 for expected_mv, adc_mv in zip(x, self._sweep_adc)
             ]
-            self._ax.scatter(x, self._sweep_adc, c=point_colors,
-                             marker="s", s=28, zorder=3,
-                             label="ADC point (red > 10 mV error)")
-            for expected_mv, adc_mv in zip(x, self._sweep_adc):
-                self._ax.annotate(
-                    f"{adc_mv:.1f} mV",
-                    (expected_mv, adc_mv),
-                    textcoords="offset points",
-                    xytext=(4, 5),
-                    fontsize=7,
-                    color=get_matplotlib_style(self._current_theme)["text.color"],
-                )
+            self._scatter = self._ax.scatter(
+                x, self._sweep_adc, c=point_colors,
+                marker="s", s=28, zorder=3,
+                label="ADC point (red > 10 mV error)",
+            )
+
+        # Hover annotation — hidden until mouse enters a point
+        self._hover_ann = self._ax.annotate(
+            "", xy=(0, 0), xytext=(15, 15),
+            textcoords="offset points",
+            bbox=dict(boxstyle="round,pad=0.5", fc="#1C2128", ec="#444C56", alpha=0.92),
+            arrowprops=dict(arrowstyle="->", color="#8B949E"),
+            fontsize=8,
+            color="#E6EDF3",
+        )
+        self._hover_ann.set_visible(False)
 
         self._ax.legend(loc="upper left", fontsize=9,
                         facecolor="#161B22", labelcolor="#E6EDF3")
         self._ax.grid(True, alpha=0.3)
         self._canvas.draw_idle()
+
+    def _on_hover(self, event):
+        if event.inaxes != self._ax or self._scatter is None or self._hover_ann is None:
+            if self._hover_ann is not None and self._hover_ann.get_visible():
+                self._hover_ann.set_visible(False)
+                self._canvas.draw_idle()
+            return
+
+        cont, ind = self._scatter.contains(event)
+        if cont:
+            idx = ind["ind"][0]
+            expected_mv = self._sweep_expected[idx]
+            adc_mv      = self._sweep_adc[idx]
+            error_mv    = adc_mv - expected_mv
+            self._hover_ann.xy = (expected_mv, adc_mv)
+            self._hover_ann.set_text(
+                f"Measured:  {adc_mv:.2f} mV\n"
+                f"Expected:  {expected_mv:.2f} mV\n"
+                f"Error:     {error_mv:+.2f} mV"
+            )
+            self._hover_ann.set_visible(True)
+            self._canvas.draw_idle()
+        else:
+            if self._hover_ann.get_visible():
+                self._hover_ann.set_visible(False)
+                self._canvas.draw_idle()
 
     def set_theme(self, theme_name):
         self._current_theme = theme_name
