@@ -159,7 +159,7 @@ class PMICTab(QWidget):
                 f"Select Buck regulator {i}.\n"
                 f"VSET0: 0x{BUCK_REGS[i]['VSET0']:03X}  "
                 f"VSET1: 0x{BUCK_REGS[i]['VSET1']:03X}\n"
-                "Voltage range: 600–3800 mV\n"
+                "Voltage range: 600–3300 mV\n"
                 "Both VSET0 and VSET1 are written with the same code."
             )
             if i == 1:
@@ -177,7 +177,7 @@ class PMICTab(QWidget):
                 f"Select LDO regulator {i}.\n"
                 f"VSET0: 0x{LDO_REGS[i]['VSET0']:03X}  "
                 f"VSET1: 0x{LDO_REGS[i]['VSET1']:03X}\n"
-                "Voltage range: 600–1600 mV (LDO limited)\n"
+                "Voltage range: 600–3300 mV\n"
                 "Both VSET0 and VSET1 are written with the same code."
             )
             self._rail_group.addButton(rb, 100 + i)  # 101-104 = LDO 1-4
@@ -190,14 +190,14 @@ class PMICTab(QWidget):
         volt_row = QHBoxLayout()
         volt_row.addWidget(QLabel("Target Voltage (mV):"))
         self.volt_spin = QDoubleSpinBox()
-        self.volt_spin.setRange(600.0, 3800.0)
+        self.volt_spin.setRange(600.0, 3300.0)
         self.volt_spin.setDecimals(1)
         self.volt_spin.setSingleStep(25.0)
         self.volt_spin.setValue(1000.0)
         self.volt_spin.setToolTip(
             "Target output voltage in mV.\n"
-            "Buck range: 600–3800 mV\n"
-            "LDO  range: 600–1600 mV\n\n"
+            "Buck range: 600–3300 mV\n"
+            "LDO  range: 600–3300 mV\n\n"
             "The nearest valid VSET code will be used (non-linear table).\n"
             "See 'Nearest valid' label for the resolved voltage."
         )

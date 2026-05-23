@@ -6,7 +6,7 @@
 VSET_TO_MV = {}
 
 # Column definitions: (vset_upper_3bits, base_mv, step_mv, max_mv)
-# VSET[7:5] = 001 : 12.5 mV steps, LDO max 1600 mV, buck clamped to 600 mV for rows 0-15
+# VSET[7:5] = 001 : 12.5 mV steps, regulator minimum 600 mV
 # VSET[7:5] = 010 : 12.5 mV steps, 800 - 1187.5 mV
 # VSET[7:5] = 011 : 12.5 mV steps, 1200 - 1587.5 mV
 # VSET[7:5] = 100 : 25   mV steps, 1600 - 2375 mV
@@ -44,10 +44,10 @@ for code, mv in VSET_TO_MV.items():
 def vset_from_voltage(target_mv, is_ldo=False):
     """
     Find the VSET code closest to target_mv.
-    LDOs are limited to 1600 mV max.
+    Buck and LDO requests are limited to 3300 mV max.
     Returns (vset_code, actual_mv, warning_str)
     """
-    limit = 1600.0 if is_ldo else 3800.0
+    limit = 3300.0
     floor_v = 600.0
 
     if target_mv < floor_v:
