@@ -7,7 +7,7 @@ from PyQt5.QtCore    import Qt, pyqtSignal, QTimer
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGroupBox,
     QPushButton, QLabel, QDoubleSpinBox, QButtonGroup, QRadioButton,
-    QScrollArea,)
+    QScrollArea, QSpinBox,)
 
 import instruments.psu_2230g as psu
 from gui.widgets             import ValueDisplay, StatusIndicator
@@ -97,12 +97,28 @@ class PSUTab(QWidget):
         self.meas_btn.setObjectName("btn_success")
         self.meas_btn.setToolTip(
             "Start background power measurement on selected channel.\n"
-            "Polls MEAS:VOLT? and MEAS:CURR? every 500 ms via SCPI.\n"
+            "Polls MEAS:VOLT? and MEAS:CURR? at the selected interval via SCPI.\n"
             "Accumulates energy (J) = ∫P dt.\n"
             "Click again to stop."
         )
         self.meas_btn.clicked.connect(self._toggle_measure)
         meas_lay.addWidget(self.meas_btn)
+
+        rate_row = QHBoxLayout()
+        rate_row.addWidget(QLabel("Sample interval (ms):"))
+        self.sample_interval_spin = QSpinBox()
+        self.sample_interval_spin.setRange(50, 10000)
+        self.sample_interval_spin.setSingleStep(50)
+        self.sample_interval_spin.setValue(psu.get_measurement_interval_ms())
+        self.sample_interval_spin.setToolTip(
+            "PSU measurement polling interval.\n"
+            "Default: 500 ms. Lower values may be limited by PSU/SCPI speed."
+        )
+        self.sample_interval_spin.valueChanged.connect(
+            self._on_sample_interval_changed)
+        rate_row.addWidget(self.sample_interval_spin)
+        rate_row.addStretch()
+        meas_lay.addLayout(rate_row)
 
         self.meas_status = StatusIndicator("idle")
         meas_lay.addWidget(self.meas_status)
@@ -137,9 +153,11 @@ class PSUTab(QWidget):
     def _toggle_measure(self):
         if not self._measuring:
             ch = self._selected_channel()
+            interval_ms = self.sample_interval_spin.value()
+            psu.set_measurement_interval_ms(interval_ms)
             psu.PSU_measure_start(ch)
             self._measuring = True
-            self._poll_timer.start(500)
+            self._poll_timer.start(interval_ms)
             self.meas_btn.setText("■  Stop Measuring")
             self.meas_btn.setObjectName("btn_danger")
             self.meas_status.set_state("busy", "Measuring…")
@@ -150,6 +168,11 @@ class PSUTab(QWidget):
             self.meas_btn.setText("▶  Start Measuring")
             self.meas_btn.setObjectName("btn_success")
             self.meas_status.set_state("idle", "Stopped")
+
+    def _on_sample_interval_changed(self, interval_ms):
+        psu.set_measurement_interval_ms(interval_ms)
+        if self._measuring:
+            self._poll_timer.start(interval_ms)
 
     def _poll_measurement(self):
         m = psu.get_measurement()

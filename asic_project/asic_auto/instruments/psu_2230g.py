@@ -19,6 +19,7 @@ _lock = threading.Lock()
 # Measurement thread control
 _meas_thread = None
 _meas_stop_event = threading.Event()
+_measurement_interval_s = 0.5
 _latest_measurement = {
     "voltage_v": 0.0,
     "current_a": 0.0,
@@ -95,8 +96,22 @@ def PSU_vset(channel, voltage):
             return {"status": "error", "error": str(e)}
 
 
+def set_measurement_interval_ms(interval_ms):
+    """Set PSU measurement polling interval in milliseconds."""
+    global _measurement_interval_s
+    interval_ms = max(50, int(interval_ms))
+    with _meas_lock:
+        _measurement_interval_s = interval_ms / 1000.0
+    return {"status": "ok", "interval_ms": interval_ms}
+
+
+def get_measurement_interval_ms():
+    with _meas_lock:
+        return int(round(_measurement_interval_s * 1000))
+
+
 def _measure_loop(channel, stop_event):
-    """Background thread: measure V and I every 500ms, accumulate energy."""
+    """Background thread: measure V and I at configured interval."""
     start_time = time.time()
     energy_j = 0.0
     last_time = start_time
@@ -132,7 +147,9 @@ def _measure_loop(channel, stop_event):
             with _meas_lock:
                 _latest_measurement["status"] = f"error: {e}"
 
-        stop_event.wait(0.5)
+        with _meas_lock:
+            interval_s = _measurement_interval_s
+        stop_event.wait(interval_s)
 
     with _meas_lock:
         _latest_measurement["status"] = "idle"
