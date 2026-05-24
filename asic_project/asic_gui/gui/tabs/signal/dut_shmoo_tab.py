@@ -42,6 +42,8 @@ MIN_MULTIPLIER = 2
 MAX_MULTIPLIER = 255
 MAX_SHMOO_POINTS = 250
 UART_POLL_SLICE_S = 0.1
+ACK_GUARD_TIMEOUT_S = 30.0
+RESULT_GUARD_TIMEOUT_S = 300.0
 
 
 def _inclusive_range(start, stop, step):
@@ -104,8 +106,8 @@ class DUTShmooWorker(QThread):
     progress = pyqtSignal(int)
 
     def __init__(self, psu_channel, voltages_v, freqs_hz, voltage_settle_s,
-                 config_settle_s, point_delay_s, ack_timeout_s,
-                 result_timeout_s, sample_interval_ms, turn_off_when_done):
+                 config_settle_s, point_delay_s, sample_interval_ms,
+                 turn_off_when_done):
         super().__init__()
         self._psu_channel = psu_channel
         self._voltages_v = voltages_v
@@ -113,8 +115,6 @@ class DUTShmooWorker(QThread):
         self._voltage_settle_s = voltage_settle_s
         self._config_settle_s = config_settle_s
         self._point_delay_s = point_delay_s
-        self._ack_timeout_s = ack_timeout_s
-        self._result_timeout_s = result_timeout_s
         self._sample_interval_ms = sample_interval_ms
         self._turn_off_when_done = turn_off_when_done
         self._stop = False
@@ -189,14 +189,14 @@ class DUTShmooWorker(QThread):
                 return result
 
             ack_byte, ack_rx = self._read_until_expected(
-                [DUT_ACK], self._ack_timeout_s)
+                [DUT_ACK], ACK_GUARD_TIMEOUT_S)
             result["rx"] += ack_rx
             if ack_byte is None:
                 result["status"] = "ack_timeout"
                 return result
 
             final_byte, final_rx = self._read_until_expected(
-                [DUT_PASS, DUT_FAIL], self._result_timeout_s)
+                [DUT_PASS, DUT_FAIL], RESULT_GUARD_TIMEOUT_S)
             result["rx"] += final_rx
             if final_byte is None:
                 result["status"] = "result_timeout"
@@ -436,24 +436,9 @@ class DUTShmooTab(QWidget):
         self.point_delay.valueChanged.connect(self._update_estimate)
         timing_row.addWidget(self.point_delay)
 
-        timing_row.addWidget(QLabel("ACK guard (s):"))
-        self.ack_timeout = QDoubleSpinBox()
-        self.ack_timeout.setRange(0.1, 300.0)
-        self.ack_timeout.setValue(30.0)
-        self.ack_timeout.setDecimals(2)
-        self.ack_timeout.valueChanged.connect(self._update_estimate)
-        timing_row.addWidget(self.ack_timeout)
         lay.addLayout(timing_row)
 
         read_row = QHBoxLayout()
-        read_row.addWidget(QLabel("Result guard (s):"))
-        self.result_timeout = QDoubleSpinBox()
-        self.result_timeout.setRange(0.1, 3600.0)
-        self.result_timeout.setValue(300.0)
-        self.result_timeout.setDecimals(2)
-        self.result_timeout.valueChanged.connect(self._update_estimate)
-        read_row.addWidget(self.result_timeout)
-
         read_row.addWidget(QLabel("PSU sample (ms):"))
         self.sample_interval = QSpinBox()
         self.sample_interval.setRange(50, 10000)
@@ -503,10 +488,7 @@ class DUTShmooTab(QWidget):
         estimate_s = (
             len(voltages_v) * (
                 self.v_settle.value() + 3.0 + self.config_settle.value()) +
-            points * (
-                self.ack_timeout.value() + self.result_timeout.value() +
-                self.point_delay.value() + 0.2
-            )
+            points * self.point_delay.value()
         )
         return voltages_v, freqs_hz, estimate_s
 
@@ -556,8 +538,6 @@ class DUTShmooTab(QWidget):
             self.v_settle.value(),
             self.config_settle.value(),
             self.point_delay.value(),
-            self.ack_timeout.value(),
-            self.result_timeout.value(),
             self.sample_interval.value(),
             self.turn_off_cb.isChecked(),
         )
