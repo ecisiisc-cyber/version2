@@ -311,6 +311,9 @@ class DUTShmooTab(QWidget):
         self._freqs_hz = []
         self._result_grid = None
         self._color_grid = None
+        self._power_grid = None
+        self._energy_grid = None
+        self._metric_ready = False
         self._stop_requested = False
         self._annot = None
         self._hover_rect = None
@@ -345,8 +348,21 @@ class DUTShmooTab(QWidget):
         self._canvas.setMinimumHeight(sc(420))
         self._canvas.setMaximumHeight(sc(560))
         self._canvas.mpl_connect("motion_notify_event", self._on_hover)
-        self._init_plot()
         root.addWidget(self._canvas)
+
+        self._metric_fig = Figure(figsize=(8, 4.2), tight_layout=True)
+        self._power_ax = self._metric_fig.add_subplot(121)
+        self._energy_ax = self._metric_fig.add_subplot(122)
+        self._metric_canvas = FigureCanvas(self._metric_fig)
+        self._metric_canvas.setSizePolicy(QSizePolicy.Expanding,
+                                          QSizePolicy.Expanding)
+        self._metric_canvas.setMinimumHeight(sc(420))
+        self._metric_canvas.setMaximumHeight(sc(560))
+        self._metric_canvas.mpl_connect("motion_notify_event", self._on_hover)
+        root.addWidget(self._metric_canvas)
+
+        self._init_plot()
+        self._init_metric_plots()
         root.addStretch()
 
     def _build_controls(self):
@@ -529,11 +545,15 @@ class DUTShmooTab(QWidget):
                              for _ in self._voltages_v]
         self._color_grid = np.full((len(self._voltages_v), len(self._freqs_hz)),
                                    -1)
+        self._power_grid = None
+        self._energy_grid = None
+        self._metric_ready = False
         self._stop_requested = False
         self._hover_enabled = False
         self._hide_annotation()
         self.progress.setValue(0)
         self._update_plot()
+        self._init_metric_plots()
 
         self.run_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)
@@ -606,7 +626,11 @@ class DUTShmooTab(QWidget):
         self._worker = None
         self._hover_enabled = (
             not self._stop_requested and self._all_points_collected())
+        self._metric_ready = self._hover_enabled
+        if self._metric_ready:
+            self._build_metric_grids()
         self._update_plot()
+        self._update_metric_plots()
 
     def _all_points_collected(self):
         if not self._result_grid:
@@ -615,16 +639,38 @@ class DUTShmooTab(QWidget):
                    for row in self._result_grid
                    for result in row)
 
+    def _build_metric_grids(self):
+        self._power_grid = np.full((len(self._voltages_v), len(self._freqs_hz)),
+                                   np.nan)
+        self._energy_grid = np.full((len(self._voltages_v), len(self._freqs_hz)),
+                                    np.nan)
+        for v_idx, row in enumerate(self._result_grid):
+            for f_idx, result in enumerate(row):
+                if not result:
+                    continue
+                power_w = result.get("power_w")
+                energy_j = result.get("energy_j")
+                if power_w is not None:
+                    self._power_grid[v_idx, f_idx] = power_w * 1000.0
+                if energy_j is not None:
+                    self._energy_grid[v_idx, f_idx] = energy_j * 1000.0
+
     def _apply_theme(self):
         rc = get_matplotlib_style(self._current_theme)
         self._fig.set_facecolor(rc["figure.facecolor"])
-        self._ax.set_facecolor(rc["axes.facecolor"])
-        for spine in self._ax.spines.values():
-            spine.set_edgecolor(rc["axes.edgecolor"])
-        self._ax.xaxis.label.set_color(rc["axes.labelcolor"])
-        self._ax.yaxis.label.set_color(rc["axes.labelcolor"])
-        self._ax.title.set_color(rc["axes.titlecolor"])
-        self._ax.tick_params(colors=rc["xtick.color"])
+        if hasattr(self, "_metric_fig"):
+            self._metric_fig.set_facecolor(rc["figure.facecolor"])
+        axes = [self._ax]
+        if hasattr(self, "_power_ax"):
+            axes.extend([self._power_ax, self._energy_ax])
+        for ax in axes:
+            ax.set_facecolor(rc["axes.facecolor"])
+            for spine in ax.spines.values():
+                spine.set_edgecolor(rc["axes.edgecolor"])
+            ax.xaxis.label.set_color(rc["axes.labelcolor"])
+            ax.yaxis.label.set_color(rc["axes.labelcolor"])
+            ax.title.set_color(rc["axes.titlecolor"])
+            ax.tick_params(colors=rc["xtick.color"])
 
     def _init_plot(self):
         self._ax.clear()
@@ -638,6 +684,73 @@ class DUTShmooTab(QWidget):
                       ha="center", va="center", transform=self._ax.transAxes,
                       color=get_matplotlib_style(self._current_theme)["text.color"])
         self._canvas.draw_idle()
+
+    def _init_metric_plots(self):
+        for ax, title in [
+            (self._power_ax, "Power Shmoo"),
+            (self._energy_ax, "Energy Shmoo"),
+        ]:
+            ax.clear()
+            self._apply_theme()
+            ax.set_title(title)
+            ax.set_xlabel("Frequency (MHz)")
+            ax.set_ylabel("Voltage (V)")
+            ax.text(0.5, 0.5, "Available after sweep completes",
+                    ha="center", va="center", transform=ax.transAxes,
+                    color=get_matplotlib_style(self._current_theme)["text.color"])
+        self._metric_canvas.draw_idle()
+
+    def _format_shmoo_axis(self, ax, title):
+        ax.set_title(title)
+        ax.set_xlabel("Frequency (MHz)")
+        ax.set_ylabel("Voltage (V)")
+        ax.set_xticks(range(len(self._freqs_hz)))
+        ax.set_xticklabels([f"{f/1e6:.3g}" for f in self._freqs_hz],
+                           rotation=45, ha="right")
+        ax.set_yticks(range(len(self._voltages_v)))
+        ax.set_yticklabels([f"{v:.3g}" for v in self._voltages_v])
+
+    def _metric_limits(self, grid):
+        valid = grid[~np.isnan(grid)]
+        if valid.size == 0:
+            return 0.0, 1.0
+        low = float(np.min(valid))
+        high = float(np.max(valid))
+        if high <= low:
+            high = low + 1.0
+        return low, high
+
+    def _update_metric_plots(self):
+        if (not self._metric_ready or self._power_grid is None or
+                self._energy_grid is None):
+            self._init_metric_plots()
+            return
+
+        self._power_ax.clear()
+        self._energy_ax.clear()
+        self._annot = None
+        self._hover_rect = None
+        self._apply_theme()
+
+        metric_cmap = mcolors.LinearSegmentedColormap.from_list(
+            "navy_to_warm_orange", ["#001F54", "#F4A261"])
+
+        for ax, grid, title, unit in [
+            (self._power_ax, self._power_grid, "Power Shmoo", "mW"),
+            (self._energy_ax, self._energy_grid, "Energy Shmoo", "mJ"),
+        ]:
+            vmin, vmax = self._metric_limits(grid)
+            im = ax.imshow(grid, origin="lower", aspect="auto",
+                           interpolation="nearest", cmap=metric_cmap,
+                           vmin=vmin, vmax=vmax)
+            im.set_in_layout(False)
+            self._format_shmoo_axis(ax, f"{title} ({unit})")
+            ax.text(0.99, 0.02, f"min {vmin:.3g}  max {vmax:.3g}",
+                    ha="right", va="bottom", transform=ax.transAxes,
+                    color=get_matplotlib_style(self._current_theme)["text.color"],
+                    fontsize=8)
+
+        self._metric_canvas.draw_idle()
 
     def _update_plot(self):
         if self._color_grid is None:
@@ -674,8 +787,9 @@ class DUTShmooTab(QWidget):
         self._canvas.draw_idle()
 
     def _on_hover(self, event):
+        valid_axes = (self._ax, self._power_ax, self._energy_ax)
         if (not self._hover_enabled or self._result_grid is None or
-                event.inaxes != self._ax):
+                event.inaxes not in valid_axes):
             self._hide_annotation()
             return
         if event.xdata is None or event.ydata is None:
@@ -697,21 +811,23 @@ class DUTShmooTab(QWidget):
             return
 
         text = self._tooltip_text(result)
-        if self._hover_rect is None:
+        active_ax = event.inaxes
+        if self._hover_rect is None or self._hover_rect.axes is not active_ax:
+            self._hide_annotation()
             self._hover_rect = mpatches.Rectangle(
                 (f_idx - 0.5, v_idx - 0.5), 1.0, 1.0,
                 fill=False, edgecolor="#00D4FF", linewidth=2.5,
                 zorder=20)
             self._hover_rect.set_in_layout(False)
-            self._ax.add_patch(self._hover_rect)
+            active_ax.add_patch(self._hover_rect)
         else:
             self._hover_rect.set_xy((f_idx - 0.5, v_idx - 0.5))
             self._hover_rect.set_visible(True)
 
-        if self._annot is None:
-            self._annot = self._ax.text(
+        if self._annot is None or self._annot.axes is not active_ax:
+            self._annot = active_ax.text(
                 0.015, 0.985, text,
-                transform=self._ax.transAxes,
+                transform=active_ax.transAxes,
                 ha="left",
                 va="top",
                 bbox=dict(boxstyle="round", fc="#FFFFFF", ec="#00D4FF",
@@ -727,7 +843,7 @@ class DUTShmooTab(QWidget):
             self._annot.get_bbox_patch().set_facecolor("#FFFFFF")
             self._annot.get_bbox_patch().set_edgecolor("#00D4FF")
             self._annot.set_color("#000000")
-        self._canvas.draw_idle()
+        active_ax.figure.canvas.draw_idle()
 
     def _tooltip_text(self, result):
         actual = result.get("actual_freq_hz")
@@ -761,7 +877,10 @@ class DUTShmooTab(QWidget):
             changed = True
         if changed:
             self._canvas.draw_idle()
+            if hasattr(self, "_metric_canvas"):
+                self._metric_canvas.draw_idle()
 
     def set_theme(self, theme_name):
         self._current_theme = theme_name
         self._update_plot()
+        self._update_metric_plots()
