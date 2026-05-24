@@ -41,6 +41,7 @@ MAX_DIVISOR = 255
 MIN_MULTIPLIER = 2
 MAX_MULTIPLIER = 255
 MAX_SHMOO_POINTS = 250
+UART_POLL_SLICE_S = 0.1
 
 
 def _inclusive_range(start, stop, step):
@@ -132,6 +133,24 @@ class DUTShmooWorker(QThread):
             elapsed += step
         return not self._stop
 
+    def _read_until_expected(self, expected, guard_timeout_s):
+        expected = tuple(expected)
+        guard_timeout_s = max(UART_POLL_SLICE_S, float(guard_timeout_s))
+        deadline = time.time() + guard_timeout_s
+        rx = b""
+
+        while not self._stop and time.time() < deadline:
+            remaining = max(0.0, deadline - time.time())
+            chunk = uart.read_raw(
+                1, timeout_s=min(UART_POLL_SLICE_S, remaining))
+            if not chunk:
+                continue
+            rx += chunk
+            if chunk[0] in expected:
+                return chunk[0], rx
+
+        return None, rx
+
     def _run_dut_point(self, voltage_v, freq_hz):
         divisor, multiplier, actual_hz = _best_clock_params(freq_hz)
         packet = bytes([
@@ -169,28 +188,25 @@ class DUTShmooWorker(QThread):
                 result["status"] = "uart_send_error"
                 return result
 
-            ack = uart.read_raw(1, timeout_s=self._ack_timeout_s)
-            result["rx"] += ack
-            if not ack:
+            ack_byte, ack_rx = self._read_until_expected(
+                [DUT_ACK], self._ack_timeout_s)
+            result["rx"] += ack_rx
+            if ack_byte is None:
                 result["status"] = "ack_timeout"
                 return result
-            if ack[0] != DUT_ACK:
-                result["status"] = "bad_ack"
-                return result
 
-            final = uart.read_raw(1, timeout_s=self._result_timeout_s)
-            result["rx"] += final
-            if not final:
+            final_byte, final_rx = self._read_until_expected(
+                [DUT_PASS, DUT_FAIL], self._result_timeout_s)
+            result["rx"] += final_rx
+            if final_byte is None:
                 result["status"] = "result_timeout"
                 return result
-            if final[0] == DUT_PASS:
+            if final_byte == DUT_PASS:
                 result["status"] = "ok"
                 result["pass_fail"] = "pass"
-            elif final[0] == DUT_FAIL:
+            elif final_byte == DUT_FAIL:
                 result["status"] = "ok"
                 result["pass_fail"] = "fail"
-            else:
-                result["status"] = "bad_result"
         finally:
             measurement = psu.PSU_measure_stop()
             result.update({
@@ -420,20 +436,20 @@ class DUTShmooTab(QWidget):
         self.point_delay.valueChanged.connect(self._update_estimate)
         timing_row.addWidget(self.point_delay)
 
-        timing_row.addWidget(QLabel("ACK timeout (s):"))
+        timing_row.addWidget(QLabel("ACK guard (s):"))
         self.ack_timeout = QDoubleSpinBox()
-        self.ack_timeout.setRange(0.1, 30.0)
-        self.ack_timeout.setValue(5.0)
+        self.ack_timeout.setRange(0.1, 300.0)
+        self.ack_timeout.setValue(30.0)
         self.ack_timeout.setDecimals(2)
         self.ack_timeout.valueChanged.connect(self._update_estimate)
         timing_row.addWidget(self.ack_timeout)
         lay.addLayout(timing_row)
 
         read_row = QHBoxLayout()
-        read_row.addWidget(QLabel("Result timeout (s):"))
+        read_row.addWidget(QLabel("Result guard (s):"))
         self.result_timeout = QDoubleSpinBox()
-        self.result_timeout.setRange(0.1, 300.0)
-        self.result_timeout.setValue(10.0)
+        self.result_timeout.setRange(0.1, 3600.0)
+        self.result_timeout.setValue(300.0)
         self.result_timeout.setDecimals(2)
         self.result_timeout.valueChanged.connect(self._update_estimate)
         read_row.addWidget(self.result_timeout)
