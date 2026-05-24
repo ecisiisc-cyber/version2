@@ -62,7 +62,7 @@ def main():
     app.setFont(font)
 
     # ── Theme with DPI-scaled font sizes ──────────────────────────────────
-    app.setStyleSheet(build_scaled_theme("dark"))
+    app.setStyleSheet(build_scaled_theme("light"))
 
     window = MainWindow()
     window.show()

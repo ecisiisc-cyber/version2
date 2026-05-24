@@ -73,7 +73,7 @@ class ClockBERTab(QWidget):
         self._sweep_worker  = None
         self._sweep_freqs   = []
         self._sweep_bers    = []
-        self._current_theme = "dark"
+        self._current_theme = "light"
 
         # ── Single scroll area holds everything: controls + sweep + plot ──
         _outer = QVBoxLayout(self)

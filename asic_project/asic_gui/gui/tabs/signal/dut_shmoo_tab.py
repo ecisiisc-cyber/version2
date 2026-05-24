@@ -306,7 +306,7 @@ class DUTShmooTab(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._worker = None
-        self._current_theme = "dark"
+        self._current_theme = "light"
         self._voltages_v = []
         self._freqs_hz = []
         self._result_grid = None

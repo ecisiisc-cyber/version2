@@ -56,7 +56,7 @@ class MainWindow(QMainWindow):
             int(screen.width()  * 0.80),
             int(screen.height() * 0.85),
         )
-        self._current_theme = "dark"
+        self._current_theme = "light"
         self._plot_window   = None
 
         self._build_toolbar()
@@ -79,7 +79,7 @@ class MainWindow(QMainWindow):
         tb.addWidget(title_lbl)
         tb.addSeparator()
 
-        self._theme_action = QAction("☀  Light", self)
+        self._theme_action = QAction("🌙  Dark", self)
         self._theme_action.setToolTip("Toggle between dark and light theme")
         self._theme_action.triggered.connect(self._toggle_theme)
         tb.addAction(self._theme_action)

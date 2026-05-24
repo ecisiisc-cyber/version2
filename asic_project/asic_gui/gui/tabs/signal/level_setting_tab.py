@@ -95,7 +95,7 @@ class LevelSettingTab(QWidget):
         self._sweep_expected = []
         self._sweep_dac      = []
         self._sweep_adc      = []
-        self._current_theme  = "dark"
+        self._current_theme  = "light"
         self._scatter        = None
         self._hover_ann      = None
 
