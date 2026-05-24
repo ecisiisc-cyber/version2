@@ -667,9 +667,10 @@ class DUTShmooTab(QWidget):
             mpatches.Patch(color="#8B949E", label="Error / timeout"),
         ]
         rc = get_matplotlib_style(self._current_theme)
-        self._ax.legend(handles=handles, loc="upper right", fontsize=8,
-                        facecolor=rc["axes.facecolor"],
-                        labelcolor=rc["text.color"])
+        legend = self._ax.legend(handles=handles, loc="upper right", fontsize=8,
+                                 facecolor=rc["axes.facecolor"],
+                                 labelcolor=rc["text.color"])
+        legend.set_in_layout(False)
         self._canvas.draw_idle()
 
     def _on_hover(self, event):
@@ -699,23 +700,28 @@ class DUTShmooTab(QWidget):
         if self._hover_rect is None:
             self._hover_rect = mpatches.Rectangle(
                 (f_idx - 0.5, v_idx - 0.5), 1.0, 1.0,
-                fill=False, edgecolor="#00D4FF", linewidth=2.5)
+                fill=False, edgecolor="#00D4FF", linewidth=2.5,
+                zorder=20)
+            self._hover_rect.set_in_layout(False)
             self._ax.add_patch(self._hover_rect)
         else:
             self._hover_rect.set_xy((f_idx - 0.5, v_idx - 0.5))
             self._hover_rect.set_visible(True)
 
         if self._annot is None:
-            self._annot = self._ax.annotate(
-                text, xy=(f_idx, v_idx), xytext=(12, 12),
-                textcoords="offset points",
+            self._annot = self._ax.text(
+                0.015, 0.985, text,
+                transform=self._ax.transAxes,
+                ha="left",
+                va="top",
                 bbox=dict(boxstyle="round", fc="#FFFFFF", ec="#00D4FF",
                           alpha=0.98),
                 color="#000000",
                 fontsize=8,
+                zorder=21,
             )
+            self._annot.set_in_layout(False)
         else:
-            self._annot.xy = (f_idx, v_idx)
             self._annot.set_text(text)
             self._annot.set_visible(True)
             self._annot.get_bbox_patch().set_facecolor("#FFFFFF")
