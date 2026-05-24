@@ -44,6 +44,9 @@ MAX_SHMOO_POINTS = 250
 UART_POLL_SLICE_S = 0.1
 ACK_GUARD_TIMEOUT_S = 30.0
 RESULT_GUARD_TIMEOUT_S = 300.0
+DEFAULT_VOLTAGE_SETTLE_S = 0.500
+DEFAULT_CONFIG_SETTLE_S = 1.000
+DEFAULT_POINT_DELAY_S = 3.000
 
 
 def _inclusive_range(start, stop, step):
@@ -290,7 +293,8 @@ class DUTShmooWorker(QThread):
 
                 if self._stop:
                     break
-                self._wait_s(self._point_delay_s)
+                if f_idx < len(self._freqs_hz) - 1:
+                    self._wait_s(self._point_delay_s)
 
         if self._turn_off_when_done and psu.is_connected():
             psu.PSU_vset(self._psu_channel, 0.0)
@@ -309,6 +313,8 @@ class DUTShmooTab(QWidget):
         self._color_grid = None
         self._stop_requested = False
         self._annot = None
+        self._hover_rect = None
+        self._hover_enabled = False
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -412,7 +418,7 @@ class DUTShmooTab(QWidget):
         timing_row.addWidget(QLabel("Voltage settle (s):"))
         self.v_settle = QDoubleSpinBox()
         self.v_settle.setRange(0.0, 60.0)
-        self.v_settle.setValue(0.500)
+        self.v_settle.setValue(DEFAULT_VOLTAGE_SETTLE_S)
         self.v_settle.setDecimals(3)
         self.v_settle.setSingleStep(0.050)
         self.v_settle.valueChanged.connect(self._update_estimate)
@@ -421,7 +427,7 @@ class DUTShmooTab(QWidget):
         timing_row.addWidget(QLabel("Config settle (s):"))
         self.config_settle = QDoubleSpinBox()
         self.config_settle.setRange(0.0, 60.0)
-        self.config_settle.setValue(1.000)
+        self.config_settle.setValue(DEFAULT_CONFIG_SETTLE_S)
         self.config_settle.setDecimals(3)
         self.config_settle.setSingleStep(0.050)
         self.config_settle.valueChanged.connect(self._update_estimate)
@@ -430,7 +436,7 @@ class DUTShmooTab(QWidget):
         timing_row.addWidget(QLabel("Point delay (s):"))
         self.point_delay = QDoubleSpinBox()
         self.point_delay.setRange(0.0, 60.0)
-        self.point_delay.setValue(3.000)
+        self.point_delay.setValue(DEFAULT_POINT_DELAY_S)
         self.point_delay.setDecimals(3)
         self.point_delay.setSingleStep(0.010)
         self.point_delay.valueChanged.connect(self._update_estimate)
@@ -485,10 +491,11 @@ class DUTShmooTab(QWidget):
             self.f_start.value(), self.f_stop.value(), self.f_step.value())
         freqs_hz = [mhz * 1_000_000.0 for mhz in freqs_mhz]
         points = len(voltages_v) * len(freqs_hz)
+        inter_freq_delays = len(voltages_v) * max(0, len(freqs_hz) - 1)
         estimate_s = (
             len(voltages_v) * (
                 self.v_settle.value() + 3.0 + self.config_settle.value()) +
-            points * self.point_delay.value()
+            inter_freq_delays * self.point_delay.value()
         )
         return voltages_v, freqs_hz, estimate_s
 
@@ -498,7 +505,7 @@ class DUTShmooTab(QWidget):
         voltages_v, freqs_hz, estimate_s = self._current_sweep_shape()
         points = len(voltages_v) * len(freqs_hz)
         self.estimate_lbl.setText(
-            f"Points: {points}  Worst-case runtime: {_format_duration(estimate_s)}")
+            f"Points: {points}  Configured delay time: {_format_duration(estimate_s)}")
 
     def _run_shmoo(self):
         if self._worker and self._worker.isRunning():
@@ -523,6 +530,8 @@ class DUTShmooTab(QWidget):
         self._color_grid = np.full((len(self._voltages_v), len(self._freqs_hz)),
                                    -1)
         self._stop_requested = False
+        self._hover_enabled = False
+        self._hide_annotation()
         self.progress.setValue(0)
         self._update_plot()
 
@@ -595,7 +604,16 @@ class DUTShmooTab(QWidget):
         label = "DUT shmoo stopped" if self._stop_requested else "DUT shmoo complete"
         self.status.set_state("idle", label)
         self._worker = None
+        self._hover_enabled = (
+            not self._stop_requested and self._all_points_collected())
         self._update_plot()
+
+    def _all_points_collected(self):
+        if not self._result_grid:
+            return False
+        return all(result is not None
+                   for row in self._result_grid
+                   for result in row)
 
     def _apply_theme(self):
         rc = get_matplotlib_style(self._current_theme)
@@ -610,6 +628,8 @@ class DUTShmooTab(QWidget):
 
     def _init_plot(self):
         self._ax.clear()
+        self._annot = None
+        self._hover_rect = None
         self._apply_theme()
         self._ax.set_title("DUT Shmoo")
         self._ax.set_xlabel("Frequency (MHz)")
@@ -625,6 +645,8 @@ class DUTShmooTab(QWidget):
             return
 
         self._ax.clear()
+        self._annot = None
+        self._hover_rect = None
         self._apply_theme()
         cmap = mcolors.ListedColormap(["#30363D", "#3FB950", "#F85149", "#8B949E"])
         norm = mcolors.BoundaryNorm([-1.5, -0.5, 0.5, 1.5, 2.5], cmap.N)
@@ -651,7 +673,8 @@ class DUTShmooTab(QWidget):
         self._canvas.draw_idle()
 
     def _on_hover(self, event):
-        if self._result_grid is None or event.inaxes != self._ax:
+        if (not self._hover_enabled or self._result_grid is None or
+                event.inaxes != self._ax):
             self._hide_annotation()
             return
         if event.xdata is None or event.ydata is None:
@@ -673,18 +696,31 @@ class DUTShmooTab(QWidget):
             return
 
         text = self._tooltip_text(result)
+        if self._hover_rect is None:
+            self._hover_rect = mpatches.Rectangle(
+                (f_idx - 0.5, v_idx - 0.5), 1.0, 1.0,
+                fill=False, edgecolor="#00D4FF", linewidth=2.5)
+            self._ax.add_patch(self._hover_rect)
+        else:
+            self._hover_rect.set_xy((f_idx - 0.5, v_idx - 0.5))
+            self._hover_rect.set_visible(True)
+
         if self._annot is None:
             self._annot = self._ax.annotate(
                 text, xy=(f_idx, v_idx), xytext=(12, 12),
                 textcoords="offset points",
-                bbox=dict(boxstyle="round", fc="#161B22", ec="#30363D", alpha=0.95),
-                color=get_matplotlib_style(self._current_theme)["text.color"],
+                bbox=dict(boxstyle="round", fc="#FFFFFF", ec="#00D4FF",
+                          alpha=0.98),
+                color="#000000",
                 fontsize=8,
             )
         else:
             self._annot.xy = (f_idx, v_idx)
             self._annot.set_text(text)
             self._annot.set_visible(True)
+            self._annot.get_bbox_patch().set_facecolor("#FFFFFF")
+            self._annot.get_bbox_patch().set_edgecolor("#00D4FF")
+            self._annot.set_color("#000000")
         self._canvas.draw_idle()
 
     def _tooltip_text(self, result):
@@ -710,8 +746,14 @@ class DUTShmooTab(QWidget):
         return "\n".join(lines)
 
     def _hide_annotation(self):
+        changed = False
         if self._annot is not None and self._annot.get_visible():
             self._annot.set_visible(False)
+            changed = True
+        if self._hover_rect is not None and self._hover_rect.get_visible():
+            self._hover_rect.set_visible(False)
+            changed = True
+        if changed:
             self._canvas.draw_idle()
 
     def set_theme(self, theme_name):
