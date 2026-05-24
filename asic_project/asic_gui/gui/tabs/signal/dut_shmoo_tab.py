@@ -103,13 +103,14 @@ class DUTShmooWorker(QThread):
     progress = pyqtSignal(int)
 
     def __init__(self, psu_channel, voltages_v, freqs_hz, voltage_settle_s,
-                 point_delay_s, ack_timeout_s, result_timeout_s,
-                 sample_interval_ms, turn_off_when_done):
+                 config_settle_s, point_delay_s, ack_timeout_s,
+                 result_timeout_s, sample_interval_ms, turn_off_when_done):
         super().__init__()
         self._psu_channel = psu_channel
         self._voltages_v = voltages_v
         self._freqs_hz = freqs_hz
         self._voltage_settle_s = voltage_settle_s
+        self._config_settle_s = config_settle_s
         self._point_delay_s = point_delay_s
         self._ack_timeout_s = ack_timeout_s
         self._result_timeout_s = result_timeout_s
@@ -251,6 +252,9 @@ class DUTShmooWorker(QThread):
                     self.progress.emit(int(done / total * 100))
                 continue
 
+            if not self._wait_s(self._config_settle_s):
+                break
+
             for f_idx, freq_hz in enumerate(self._freqs_hz):
                 if self._stop:
                     break
@@ -331,6 +335,7 @@ class DUTShmooTab(QWidget):
         psu_row.addWidget(QLabel("PSU channel:"))
         self.psu_channel_combo = QComboBox()
         self.psu_channel_combo.addItems(["CH1", "CH2", "CH3"])
+        self.psu_channel_combo.setCurrentIndex(2)
         psu_row.addWidget(self.psu_channel_combo)
         psu_row.addStretch()
         lay.addLayout(psu_row)
@@ -391,16 +396,25 @@ class DUTShmooTab(QWidget):
         timing_row.addWidget(QLabel("Voltage settle (s):"))
         self.v_settle = QDoubleSpinBox()
         self.v_settle.setRange(0.0, 60.0)
-        self.v_settle.setValue(0.200)
+        self.v_settle.setValue(0.500)
         self.v_settle.setDecimals(3)
         self.v_settle.setSingleStep(0.050)
         self.v_settle.valueChanged.connect(self._update_estimate)
         timing_row.addWidget(self.v_settle)
 
+        timing_row.addWidget(QLabel("Config settle (s):"))
+        self.config_settle = QDoubleSpinBox()
+        self.config_settle.setRange(0.0, 60.0)
+        self.config_settle.setValue(1.000)
+        self.config_settle.setDecimals(3)
+        self.config_settle.setSingleStep(0.050)
+        self.config_settle.valueChanged.connect(self._update_estimate)
+        timing_row.addWidget(self.config_settle)
+
         timing_row.addWidget(QLabel("Point delay (s):"))
         self.point_delay = QDoubleSpinBox()
         self.point_delay.setRange(0.0, 60.0)
-        self.point_delay.setValue(0.050)
+        self.point_delay.setValue(3.000)
         self.point_delay.setDecimals(3)
         self.point_delay.setSingleStep(0.010)
         self.point_delay.valueChanged.connect(self._update_estimate)
@@ -409,7 +423,7 @@ class DUTShmooTab(QWidget):
         timing_row.addWidget(QLabel("ACK timeout (s):"))
         self.ack_timeout = QDoubleSpinBox()
         self.ack_timeout.setRange(0.1, 30.0)
-        self.ack_timeout.setValue(2.0)
+        self.ack_timeout.setValue(5.0)
         self.ack_timeout.setDecimals(2)
         self.ack_timeout.valueChanged.connect(self._update_estimate)
         timing_row.addWidget(self.ack_timeout)
@@ -471,7 +485,8 @@ class DUTShmooTab(QWidget):
         freqs_hz = [mhz * 1_000_000.0 for mhz in freqs_mhz]
         points = len(voltages_v) * len(freqs_hz)
         estimate_s = (
-            len(voltages_v) * (self.v_settle.value() + 3.0) +
+            len(voltages_v) * (
+                self.v_settle.value() + 3.0 + self.config_settle.value()) +
             points * (
                 self.ack_timeout.value() + self.result_timeout.value() +
                 self.point_delay.value() + 0.2
@@ -523,6 +538,7 @@ class DUTShmooTab(QWidget):
             self._voltages_v,
             self._freqs_hz,
             self.v_settle.value(),
+            self.config_settle.value(),
             self.point_delay.value(),
             self.ack_timeout.value(),
             self.result_timeout.value(),
