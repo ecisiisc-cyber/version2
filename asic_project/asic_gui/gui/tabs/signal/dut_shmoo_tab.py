@@ -18,7 +18,6 @@ from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGroupBox,
     QPushButton, QLabel, QDoubleSpinBox, QSpinBox, QComboBox,
     QProgressBar, QSizePolicy, QScrollArea, QCheckBox,
-    QToolButton, QMenu, QWidgetAction,
 )
 
 import instruments.psu_2230g as psu
@@ -410,11 +409,6 @@ class DUTShmooTab(QWidget):
         f_row.addWidget(self.f_step)
         lay.addLayout(f_row)
 
-        timing_widget = QWidget()
-        timing_lay = QVBoxLayout(timing_widget)
-        timing_lay.setContentsMargins(10, 8, 10, 8)
-        timing_lay.setSpacing(8)
-
         timing_row = QHBoxLayout()
         timing_row.addWidget(QLabel("Voltage settle (s):"))
         self.v_settle = QDoubleSpinBox()
@@ -442,7 +436,8 @@ class DUTShmooTab(QWidget):
         self.point_delay.setSingleStep(0.010)
         self.point_delay.valueChanged.connect(self._update_estimate)
         timing_row.addWidget(self.point_delay)
-        timing_lay.addLayout(timing_row)
+
+        lay.addLayout(timing_row)
 
         read_row = QHBoxLayout()
         read_row.addWidget(QLabel("PSU sample (ms):"))
@@ -451,25 +446,6 @@ class DUTShmooTab(QWidget):
         self.sample_interval.setSingleStep(50)
         self.sample_interval.setValue(psu.get_measurement_interval_ms())
         read_row.addWidget(self.sample_interval)
-        read_row.addStretch()
-        timing_lay.addLayout(read_row)
-
-        self.timing_menu = QMenu(self)
-        timing_action = QWidgetAction(self.timing_menu)
-        timing_action.setDefaultWidget(timing_widget)
-        self.timing_menu.addAction(timing_action)
-
-        timing_btn_row = QHBoxLayout()
-        self.timing_btn = QToolButton()
-        self.timing_btn.setText("Timing / measurement settings")
-        self.timing_btn.setPopupMode(QToolButton.InstantPopup)
-        self.timing_btn.setMenu(self.timing_menu)
-        self.timing_btn.setToolButtonStyle(Qt.ToolButtonTextOnly)
-        timing_btn_row.addWidget(self.timing_btn)
-        timing_btn_row.addStretch()
-        lay.addLayout(timing_btn_row)
-
-        read_row = QHBoxLayout()
 
         self.turn_off_cb = QCheckBox("Set 0 V when done")
         self.turn_off_cb.setChecked(False)
