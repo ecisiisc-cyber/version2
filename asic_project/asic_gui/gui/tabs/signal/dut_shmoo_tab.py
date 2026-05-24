@@ -309,7 +309,6 @@ class DUTShmooTab(QWidget):
         self._color_grid = None
         self._stop_requested = False
         self._annot = None
-        self._hover_rect = None
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -611,8 +610,6 @@ class DUTShmooTab(QWidget):
 
     def _init_plot(self):
         self._ax.clear()
-        self._annot = None
-        self._hover_rect = None
         self._apply_theme()
         self._ax.set_title("DUT Shmoo")
         self._ax.set_xlabel("Frequency (MHz)")
@@ -628,8 +625,6 @@ class DUTShmooTab(QWidget):
             return
 
         self._ax.clear()
-        self._annot = None
-        self._hover_rect = None
         self._apply_theme()
         cmap = mcolors.ListedColormap(["#30363D", "#3FB950", "#F85149", "#8B949E"])
         norm = mcolors.BoundaryNorm([-1.5, -0.5, 0.5, 1.5, 2.5], cmap.N)
@@ -678,31 +673,18 @@ class DUTShmooTab(QWidget):
             return
 
         text = self._tooltip_text(result)
-        if self._hover_rect is None:
-            self._hover_rect = mpatches.Rectangle(
-                (f_idx - 0.5, v_idx - 0.5), 1.0, 1.0,
-                fill=False, edgecolor="#00D4FF", linewidth=2.5)
-            self._ax.add_patch(self._hover_rect)
-        else:
-            self._hover_rect.set_xy((f_idx - 0.5, v_idx - 0.5))
-            self._hover_rect.set_visible(True)
-
         if self._annot is None:
             self._annot = self._ax.annotate(
                 text, xy=(f_idx, v_idx), xytext=(12, 12),
                 textcoords="offset points",
-                bbox=dict(boxstyle="round", fc="#FFFFFF", ec="#00D4FF",
-                          alpha=0.98),
-                color="#000000",
+                bbox=dict(boxstyle="round", fc="#161B22", ec="#30363D", alpha=0.95),
+                color=get_matplotlib_style(self._current_theme)["text.color"],
                 fontsize=8,
             )
         else:
             self._annot.xy = (f_idx, v_idx)
             self._annot.set_text(text)
             self._annot.set_visible(True)
-            self._annot.get_bbox_patch().set_facecolor("#FFFFFF")
-            self._annot.get_bbox_patch().set_edgecolor("#00D4FF")
-            self._annot.set_color("#000000")
         self._canvas.draw_idle()
 
     def _tooltip_text(self, result):
@@ -728,14 +710,8 @@ class DUTShmooTab(QWidget):
         return "\n".join(lines)
 
     def _hide_annotation(self):
-        changed = False
         if self._annot is not None and self._annot.get_visible():
             self._annot.set_visible(False)
-            changed = True
-        if self._hover_rect is not None and self._hover_rect.get_visible():
-            self._hover_rect.set_visible(False)
-            changed = True
-        if changed:
             self._canvas.draw_idle()
 
     def set_theme(self, theme_name):
